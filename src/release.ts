@@ -97,10 +97,12 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
       locale,
       git,
       t(locale, "logCheckoutPull", { name: source }),
-      `git checkout ${source} && git pull`,
+      `git checkout ${source} && git pull --ff --no-edit origin ${source}`,
       async () => {
         await git.checkout(source);
-        await git.pull();
+        if ((await git.pull(source)) === "local-only") {
+          log("warn", t(locale, "logLocalOnly", { name: source }));
+        }
       },
       source
     );
@@ -183,10 +185,12 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
       locale,
       git,
       t(locale, "logCheckoutPull", { name: production }),
-      `git checkout ${production} && git pull`,
+      `git checkout ${production} && git pull --ff --no-edit origin ${production}`,
       async () => {
         await git.checkout(production);
-        await git.pull();
+        if ((await git.pull(production)) === "local-only") {
+          log("warn", t(locale, "logLocalOnly", { name: production }));
+        }
       },
       production
     );
@@ -235,10 +239,12 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
         locale,
         git,
         t(locale, "logMergeTag", { tag, name: branch }),
-        `git checkout ${branch} && git pull && git merge ${tag} --no-ff && git push`,
+        `git checkout ${branch} && git pull --ff --no-edit origin ${branch} && git merge ${tag} --no-ff && git push`,
         async () => {
           await git.checkout(branch);
-          await git.pull();
+          if ((await git.pull(branch)) === "local-only") {
+            log("warn", t(locale, "logLocalOnly", { name: branch }));
+          }
           await git.merge(tag, `Merge tag '${tag}' into ${branch}`);
           await git.push(branch);
         },
@@ -406,10 +412,12 @@ export async function runResumeTagMerge(input: ResumeTagInput, onLog?: Logger): 
         locale,
         git,
         t(locale, "logMergeTag", { tag, name: branch }),
-        `git checkout ${branch} && git pull && git merge ${tag} --no-ff && git push`,
+        `git checkout ${branch} && git pull --ff --no-edit origin ${branch} && git merge ${tag} --no-ff && git push`,
         async () => {
           await git.checkout(branch);
-          await git.pull();
+          if ((await git.pull(branch)) === "local-only") {
+            log("warn", t(locale, "logLocalOnly", { name: branch }));
+          }
           const afterPull = await git.conflictedFiles();
           if (afterPull.length) {
             throw Object.assign(new Error(t(locale, "mergeStopped", { name: branch })), {

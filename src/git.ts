@@ -114,13 +114,16 @@ export class GitRepo {
   }
 
   async checkout(branch: string): Promise<string> {
+    let out: string;
     if (await this.hasLocalBranch(branch)) {
-      return this.run(["checkout", branch]);
+      out = await this.run(["checkout", branch]);
+    } else if (await this.hasRemoteBranch(branch)) {
+      out = await this.run(["checkout", "-B", branch, `origin/${branch}`]);
+    } else {
+      throw new GitError(`branch ${branch} not found`, "", `git checkout ${branch}`);
     }
-    if (await this.hasRemoteBranch(branch)) {
-      return this.run(["checkout", "-B", branch, `origin/${branch}`]);
-    }
-    throw new GitError(`branch ${branch} not found`, "", `git checkout ${branch}`);
+    await this.trackRemote(branch);
+    return out;
   }
 
   async checkoutNew(name: string, from: string): Promise<string> {
@@ -128,8 +131,22 @@ export class GitRepo {
     return this.run(["checkout", "-B", name, source]);
   }
 
-  async pull(): Promise<string> {
-    return this.run(["pull"]);
+  async pull(branch?: string): Promise<string> {
+    const name = (branch || (await this.currentBranch())).trim();
+    await this.fetch().catch(() => undefined);
+    if (!(await this.hasRemoteBranch(name))) {
+      return "local-only";
+    }
+    await this.trackRemote(name);
+    return this.run(["-c", "core.editor=true", "pull", "--ff", "--no-edit", "--no-rebase", "origin", name]);
+  }
+
+  private async trackRemote(branch: string): Promise<void> {
+    try {
+      await this.run(["branch", "--set-upstream-to", `origin/${branch}`, branch]);
+    } catch {
+      // already tracking or remote missing
+    }
   }
 
   async push(branch?: string): Promise<string> {

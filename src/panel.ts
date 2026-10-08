@@ -398,9 +398,19 @@ export class ReleasePanel {
             </div>
             <p id="versionHint" class="hint"></p>
           </section>
-          <section id="step-merge" class="block card">
+          <section id="step-source" class="block card">
             <div class="block-head">
               <span class="step">4</span>
+              <div>
+                <h2 data-i18n="sourceTitle">Release start branch</h2>
+                <p data-i18n="sourceHelp">The release is created from this branch. Develop is preselected when present.</p>
+              </div>
+            </div>
+            <select id="sourceBranch" class="chip-select"></select>
+          </section>
+          <section id="step-merge" class="block card">
+            <div class="block-head">
+              <span class="step">5</span>
               <div>
                 <h2 data-i18n="mergeTitle">Merge into release</h2>
                 <p data-i18n="mergeHelp">On top of develop, already used as the base.</p>
@@ -417,16 +427,6 @@ export class ReleasePanel {
             <div id="mergeSelected" class="selected-badges"></div>
             <div id="mergeBranches" class="checks"></div>
             <p id="mergeEmpty" class="empty hidden" data-i18n="noBranchMatch">No branch matches the search.</p>
-          </section>
-          <section id="step-source" class="block card">
-            <div class="block-head">
-              <span class="step">5</span>
-              <div>
-                <h2 data-i18n="sourceTitle">Release start branch</h2>
-                <p data-i18n="sourceHelp">The release is created from this branch. Develop is preselected when present.</p>
-              </div>
-            </div>
-            <select id="sourceBranch" class="chip-select"></select>
           </section>
           <section id="step-tag" class="block card">
             <div class="block-head">
