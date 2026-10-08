@@ -111,6 +111,7 @@ export class ReleasePanel {
     }
     if (message.type === "selectRepo") {
       this.selectedRepo = message.path;
+      await this.sendHistory();
       await this.sendRepoState(message.path);
       return;
     }
@@ -156,6 +157,7 @@ export class ReleasePanel {
       ? this.selectedRepo
       : repos[0]?.path;
     this.selectedRepo = selected;
+    await this.sendHistory();
     await this.panel.webview.postMessage({ type: "repos", repos, selected });
     if (selected) {
       await this.sendRepoState(selected);
@@ -290,7 +292,10 @@ export class ReleasePanel {
   }
 
   private async sendHistory(): Promise<void> {
-    await this.panel.webview.postMessage({ type: "history", records: loadHistory(this.context) });
+    await this.panel.webview.postMessage({
+      type: "history",
+      records: loadHistory(this.context, this.selectedRepo),
+    });
   }
 
   private async sendI18n(): Promise<void> {

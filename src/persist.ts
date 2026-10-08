@@ -153,8 +153,12 @@ export interface DeployRecord {
   conflictFiles?: string[];
 }
 
-export function loadHistory(context: vscode.ExtensionContext): DeployRecord[] {
-  return context.globalState.get<DeployRecord[]>(HISTORY_KEY, []);
+export function loadHistory(context: vscode.ExtensionContext, repoPath?: string): DeployRecord[] {
+  const all = context.globalState.get<DeployRecord[]>(HISTORY_KEY, []);
+  if (!repoPath) {
+    return all;
+  }
+  return all.filter((record) => record.repoPath === repoPath);
 }
 
 export async function saveDeploy(context: vscode.ExtensionContext, record: DeployRecord): Promise<void> {
