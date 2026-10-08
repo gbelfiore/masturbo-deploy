@@ -3,7 +3,8 @@ import { GitRepo } from "./git";
 import { findWorkspaceRepos } from "./repos";
 import { ConflictInfo, runRelease, runResumeTagMerge } from "./release";
 import { latestVersion, readPackageVersion } from "./version";
-import { defaultTargets, HeaderTools, keepExisting, loadHeaderTools, loadSelection, saveHeaderTools, saveSelection } from "./persist";
+import { defaultSource, defaultTargets, DeployRecord, HeaderTools, keepExisting, loadHeaderTools, loadHeaderToolsAsync, loadHistory, loadSelection, saveDeploy, saveHeaderTools, saveSelection } from "./persist";
+import * as path from "path";
 import { LOCALES, Locale, isLocale, loadLocale, MESSAGES, saveLocale, t } from "./i18n";
 
 type WebviewMessage =
@@ -17,6 +18,7 @@ type WebviewMessage =
       repoPath: string;
       mergeBranches: string[];
       targetBranches: string[];
+      sourceBranch: string;
     }
   | {
       type: "start";
@@ -24,6 +26,7 @@ type WebviewMessage =
       version: string;
       mergeBranches: string[];
       targetBranches: string[];
+      sourceBranch: string;
       reuseReleaseBranch: boolean;
       dryRun: boolean;
       deleteMergedBranches: boolean;
@@ -40,9 +43,9 @@ type WebviewMessage =
 export class ReleasePanel {
   static current: ReleasePanel | undefined;
 
-  static show(context: vscode.ExtensionContext): void {
+  static show(context: vscode.ExtensionContext, selectedRepo?: string): void {
     if (ReleasePanel.current) {
-      ReleasePanel.current.reveal();
+      ReleasePanel.current.reveal(selectedRepo);
       return;
     }
     const panel = vscode.window.createWebviewPanel(
@@ -55,7 +58,7 @@ export class ReleasePanel {
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "media")],
       }
     );
-    ReleasePanel.current = new ReleasePanel(panel, context);
+    ReleasePanel.current = new ReleasePanel(panel, context, selectedRepo);
   }
 
   private constructor(
@@ -73,30 +76,33 @@ export class ReleasePanel {
     });
   }
 
-  reveal(): void {
+  reveal(selectedRepo?: string): void {
+    this.selectedRepo = selectedRepo;
     this.panel.reveal();
-    this.selectedRepo = undefined;
-    void this.sendI18n()
-      .then(() => this.sendHeaderTools())
-      .then(() => this.sendRepos());
+    this.panel.webview.html = this.html();
   }
 
   private async handle(message: WebviewMessage): Promise<void> {
     if (message.type === "ready") {
-      this.selectedRepo = undefined;
       await this.sendI18n();
       await this.sendHeaderTools();
+      await this.sendHistory();
       await this.sendRepos();
       return;
     }
     if (message.type === "refresh") {
       await this.sendI18n();
-      await this.sendHeaderTools();
+      await this.sendHistory();
       await this.sendRepos();
       return;
     }
     if (message.type === "saveHeaderTools") {
-      await saveHeaderTools(this.context, message.tools);
+      await saveHeaderTools(this.context, {
+        reuseRelease: message.tools?.reuseRelease === true,
+        dryRun: message.tools?.dryRun === true,
+        deleteMerged: message.tools?.deleteMerged === true,
+        deleteRelease: message.tools?.deleteRelease === true,
+      });
       return;
     }
     if (message.type === "setLanguage" && isLocale(message.locale)) {
@@ -113,22 +119,33 @@ export class ReleasePanel {
       await saveSelection(this.context, message.repoPath, {
         mergeBranches: message.mergeBranches,
         targetBranches: message.targetBranches,
+        sourceBranch: message.sourceBranch,
       });
       return;
     }
     if (message.type === "start") {
+      await saveHeaderTools(this.context, {
+        reuseRelease: message.reuseReleaseBranch === true,
+        dryRun: message.dryRun === true,
+        deleteMerged: message.deleteMergedBranches === true,
+        deleteRelease: message.deleteReleaseBranch === true,
+      });
       await saveSelection(this.context, message.repoPath, {
         mergeBranches: message.mergeBranches,
         targetBranches: message.targetBranches,
+        sourceBranch: message.sourceBranch,
       });
       await this.start(message);
       return;
     }
     if (message.type === "resumeTag") {
+      const current = loadHeaderTools(this.context);
+      await saveHeaderTools(this.context, { ...current, dryRun: message.dryRun === true });
       const saved = loadSelection(this.context, message.repoPath);
       await saveSelection(this.context, message.repoPath, {
         mergeBranches: saved?.mergeBranches ?? [],
         targetBranches: message.targetBranches,
+        sourceBranch: saved?.sourceBranch,
       });
       await this.resumeTag(message);
     }
@@ -175,6 +192,7 @@ export class ReleasePanel {
         currentVersion,
         savedMerge: keepExisting(saved?.mergeBranches, branches),
         savedTargets: saved ? keepExisting(saved.targetBranches, branches) : defaultTargets(branches),
+        savedSource: defaultSource(branches, saved?.sourceBranch),
       });
     } catch (error) {
       await this.panel.webview.postMessage({
@@ -191,6 +209,7 @@ export class ReleasePanel {
         version: message.version,
         mergeBranches: message.mergeBranches,
         targetBranches: message.targetBranches,
+        sourceBranch: message.sourceBranch,
         reuseReleaseBranch: message.reuseReleaseBranch,
         dryRun: message.dryRun,
         deleteMergedBranches: message.deleteMergedBranches,
@@ -201,6 +220,7 @@ export class ReleasePanel {
         void this.panel.webview.postMessage({ type: "log", level, message: text });
       }
     );
+    await this.storeDeploy("release", message.repoPath, message.version, message.mergeBranches, message.targetBranches, message.dryRun, result);
     await this.panel.webview.postMessage({ type: "done", ok: result.ok });
     const locale = loadLocale(this.context);
     if (result.conflict) {
@@ -229,6 +249,7 @@ export class ReleasePanel {
         void this.panel.webview.postMessage({ type: "log", level, message: text });
       }
     );
+    await this.storeDeploy("resume", message.repoPath, message.version, [], message.targetBranches, message.dryRun, result);
     await this.panel.webview.postMessage({ type: "done", ok: result.ok });
     const locale = loadLocale(this.context);
     if (result.conflict) {
@@ -240,6 +261,37 @@ export class ReleasePanel {
     } else {
       void vscode.window.showErrorMessage(t(locale, "resumeMergeStopped"));
     }
+  }
+
+  private async storeDeploy(
+    kind: DeployRecord["kind"],
+    repoPath: string,
+    version: string,
+    originBranches: string[],
+    targetBranches: string[],
+    dryRun: boolean,
+    result: { ok: boolean; tag: string; logs: { level: "info" | "ok" | "warn" | "error"; message: string }[]; conflict?: ConflictInfo }
+  ): Promise<void> {
+    await saveDeploy(this.context, {
+      id: `${Date.now()}-${version}`,
+      at: Date.now(),
+      kind,
+      repoName: path.basename(repoPath),
+      repoPath,
+      tag: result.tag || version,
+      originBranches,
+      targetBranches,
+      dryRun,
+      ok: result.ok,
+      logs: result.logs,
+      conflictBranch: result.conflict?.branch,
+      conflictFiles: result.conflict?.files,
+    });
+    await this.sendHistory();
+  }
+
+  private async sendHistory(): Promise<void> {
+    await this.panel.webview.postMessage({ type: "history", records: loadHistory(this.context) });
   }
 
   private async sendI18n(): Promise<void> {
@@ -254,7 +306,7 @@ export class ReleasePanel {
   private async sendHeaderTools(): Promise<void> {
     await this.panel.webview.postMessage({
       type: "headerTools",
-      tools: loadHeaderTools(this.context),
+      tools: await loadHeaderToolsAsync(this.context),
     });
   }
 
@@ -287,11 +339,16 @@ export class ReleasePanel {
             <h1>MasTurbo Deploy</h1>
           </div>
           <div class="workspace-tools">
+            <nav class="page-nav">
+              <button type="button" id="navRelease" class="nav-btn is-active" data-i18n="navRelease">Release</button>
+              <button type="button" id="navHistory" class="nav-btn" data-i18n="navHistory">History</button>
+            </nav>
             <label class="lang-wrap">
               <select id="lang" class="lang-select" aria-label="Language">${langOptions}</select>
             </label>
           </div>
         </div>
+        <div id="page-release">
         <main>
           <section id="step-options" class="block card">
             <div class="block-head">
@@ -361,9 +418,19 @@ export class ReleasePanel {
             <div id="mergeBranches" class="checks"></div>
             <p id="mergeEmpty" class="empty hidden" data-i18n="noBranchMatch">No branch matches the search.</p>
           </section>
-          <section id="step-tag" class="block card">
+          <section id="step-source" class="block card">
             <div class="block-head">
               <span class="step">5</span>
+              <div>
+                <h2 data-i18n="sourceTitle">Release start branch</h2>
+                <p data-i18n="sourceHelp">The release is created from this branch. Develop is preselected when present.</p>
+              </div>
+            </div>
+            <select id="sourceBranch" class="chip-select"></select>
+          </section>
+          <section id="step-tag" class="block card">
+            <div class="block-head">
+              <span class="step">6</span>
               <div>
                 <h2 data-i18n="tagTitle">Branches that receive the tag</h2>
                 <p data-i18n="tagHelp">git pull && git merge &lt;tag&gt; --no-ff && git push</p>
@@ -383,19 +450,44 @@ export class ReleasePanel {
           </section>
           <section id="step-log" class="block card">
             <div class="block-head">
-              <span class="step">6</span>
+              <span class="step">7</span>
               <div>
                 <h2 data-i18n="log">Log</h2>
                 <p data-i18n="logHelp">Git command output.</p>
               </div>
             </div>
-            <pre id="log"></pre>
+            <div id="log" class="log-view"></div>
           </section>
           <div class="form-end">
             <button id="resumeTag" type="button" class="secondary" data-i18n="resumeMergeTag">Resume merge tag</button>
             <button id="start" type="button" class="primary" data-i18n="startRelease">Start release</button>
           </div>
         </main>
+        </div>
+        <div id="page-history" class="hidden">
+          <section class="block card">
+            <div class="block-head">
+              <span class="step">1</span>
+              <div>
+                <h2 data-i18n="historyTitle">Deploy history</h2>
+                <p data-i18n="historyHelp">Saved deploys with tag, origin branches, destination branches and log.</p>
+              </div>
+            </div>
+            <p id="historyEmpty" class="empty" data-i18n="historyEmpty">No deploys yet.</p>
+            <div id="historyList" class="history-list"></div>
+          </section>
+          <section id="historyDetail" class="block card hidden">
+            <div class="block-head">
+              <span class="step">2</span>
+              <div>
+                <h2 id="historyDetailTitle">—</h2>
+                <p id="historyDetailMeta"></p>
+              </div>
+            </div>
+            <div id="historyMeta" class="history-meta"></div>
+            <div id="historyLog" class="log-view"></div>
+          </section>
+        </div>
       </div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>

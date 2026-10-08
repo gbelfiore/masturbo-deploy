@@ -46,11 +46,6 @@ export class RepoItem extends vscode.TreeItem {
     this.tooltip = repo.path;
     this.contextValue = "repo";
     this.iconPath = new vscode.ThemeIcon("repo");
-    this.command = {
-      command: "releaseDeploy.open",
-      title: "Open wizard",
-      arguments: [repo.path],
-    };
   }
 }
 

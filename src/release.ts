@@ -9,6 +9,7 @@ export interface ReleaseInput {
   version: string;
   mergeBranches: string[];
   targetBranches: string[];
+  sourceBranch: string;
   reuseReleaseBranch: boolean;
   dryRun: boolean;
   deleteMergedBranches: boolean;
@@ -65,15 +66,15 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
     }
 
     log("info", input.dryRun ? t(locale, "dryRunMode") : t(locale, "startingRelease", { version }));
-    log("info", `repository: ${input.repoPath}`);
+    log("info", `${t(locale, "historyRepo")}: ${input.repoPath}`);
 
     if (!input.dryRun && (await git.isDirty())) {
       throw new Error(t(locale, "dirtyWorkingTree"));
     }
 
-    await step(input.dryRun, log, "git fetch --all --prune", () => git.fetch());
+    await step(input.dryRun, log, locale, git, t(locale, "logFetch"), "git fetch --all --prune", () => git.fetch());
 
-    const source = await git.sourceBranch();
+    const source = input.sourceBranch.trim() || (await git.sourceBranch());
     const production = await git.productionBranch();
     log("info", t(locale, "sourceBranch", { name: source }));
     log("info", t(locale, "productionBranch", { name: production }));
@@ -90,16 +91,42 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
       throw new Error(t(locale, "releaseExists", { name: releaseBranch }));
     }
 
-    await step(input.dryRun, log, `git checkout ${source} && git pull`, async () => {
-      await git.checkout(source);
-      await git.pull();
-    });
+    const pulled = await step(
+      input.dryRun,
+      log,
+      locale,
+      git,
+      t(locale, "logCheckoutPull", { name: source }),
+      `git checkout ${source} && git pull`,
+      async () => {
+        await git.checkout(source);
+        await git.pull();
+      },
+      source
+    );
+    if (pulled) {
+      return stopOnConflict(logs, releaseBranch, tag, production, pulled, locale, log);
+    }
 
     if (releaseExists && input.reuseReleaseBranch) {
-      await step(input.dryRun, log, `git checkout ${releaseBranch}`, () => git.checkout(releaseBranch));
+      await step(
+        input.dryRun,
+        log,
+        locale,
+        git,
+        t(locale, "logReuseRelease", { name: releaseBranch }),
+        `git checkout ${releaseBranch}`,
+        () => git.checkout(releaseBranch)
+      );
     } else {
-      await step(input.dryRun, log, `git checkout -B ${releaseBranch} ${source}`, () =>
-        git.checkoutNew(releaseBranch, source)
+      await step(
+        input.dryRun,
+        log,
+        locale,
+        git,
+        t(locale, "logCreateRelease", { name: releaseBranch }),
+        `git checkout -B ${releaseBranch} ${source}`,
+        () => git.checkoutNew(releaseBranch, source)
       );
     }
 
@@ -125,42 +152,112 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
       if (branch === releaseBranch) {
         continue;
       }
-      await step(input.dryRun, log, `git merge ${branch} --no-ff`, () =>
-        git.merge(branch, `Merge branch '${branch}' into ${releaseBranch}`)
+      const conflict = await step(
+        input.dryRun,
+        log,
+        locale,
+        git,
+        t(locale, "logMergeBranch", { name: branch }),
+        `git merge ${branch} --no-ff`,
+        () => git.merge(branch, `Merge branch '${branch}' into ${releaseBranch}`),
+        branch
       );
+      if (conflict) {
+        return stopOnConflict(logs, releaseBranch, tag, production, conflict, locale, log);
+      }
     }
 
-    await step(input.dryRun, log, `git push -u origin ${releaseBranch}`, () => git.push(releaseBranch));
-
-    await step(input.dryRun, log, `git checkout ${production} && git pull`, async () => {
-      await git.checkout(production);
-      await git.pull();
-    });
-    await step(input.dryRun, log, `git merge ${releaseBranch} --no-ff`, () =>
-      git.merge(releaseBranch, `Merge branch '${releaseBranch}'`)
+    await step(
+      input.dryRun,
+      log,
+      locale,
+      git,
+      t(locale, "logPushRelease"),
+      `git push -u origin ${releaseBranch}`,
+      () => git.push(releaseBranch)
     );
-    await step(input.dryRun, log, `git push origin ${production}`, () => git.push(production));
+
+    const prodPull = await step(
+      input.dryRun,
+      log,
+      locale,
+      git,
+      t(locale, "logCheckoutPull", { name: production }),
+      `git checkout ${production} && git pull`,
+      async () => {
+        await git.checkout(production);
+        await git.pull();
+      },
+      production
+    );
+    if (prodPull) {
+      return stopOnConflict(logs, releaseBranch, tag, production, prodPull, locale, log);
+    }
+
+    const prodMerge = await step(
+      input.dryRun,
+      log,
+      locale,
+      git,
+      t(locale, "logMergeProduction", { name: production }),
+      `git merge ${releaseBranch} --no-ff`,
+      () => git.merge(releaseBranch, `Merge branch '${releaseBranch}'`),
+      production
+    );
+    if (prodMerge) {
+      return stopOnConflict(logs, releaseBranch, tag, production, prodMerge, locale, log);
+    }
+
+    await step(
+      input.dryRun,
+      log,
+      locale,
+      git,
+      t(locale, "logPushProduction", { name: production }),
+      `git push origin ${production}`,
+      () => git.push(production)
+    );
 
     if (await git.hasTag(tag)) {
       log("warn", t(locale, "tagExists", { tag }));
     } else {
-      await step(input.dryRun, log, `git tag ${tag}`, () => git.tag(tag));
+      await step(input.dryRun, log, locale, git, t(locale, "logCreateTag", { tag }), `git tag ${tag}`, () => git.tag(tag));
     }
-    await step(input.dryRun, log, "git push origin --tags", () => git.pushTags());
+    await step(input.dryRun, log, locale, git, t(locale, "logPushTags"), "git push origin --tags", () => git.pushTags());
 
     for (const branch of unique(input.targetBranches)) {
       if (branch === production || branch === releaseBranch) {
         continue;
       }
-      await step(input.dryRun, log, `git checkout ${branch} && git pull && git merge ${tag} --no-ff && git push`, async () => {
-        await git.checkout(branch);
-        await git.pull();
-        await git.merge(tag, `Merge tag '${tag}' into ${branch}`);
-        await git.push(branch);
-      });
+      const conflict = await step(
+        input.dryRun,
+        log,
+        locale,
+        git,
+        t(locale, "logMergeTag", { tag, name: branch }),
+        `git checkout ${branch} && git pull && git merge ${tag} --no-ff && git push`,
+        async () => {
+          await git.checkout(branch);
+          await git.pull();
+          await git.merge(tag, `Merge tag '${tag}' into ${branch}`);
+          await git.push(branch);
+        },
+        branch
+      );
+      if (conflict) {
+        return stopOnConflict(logs, releaseBranch, tag, production, conflict, locale, log);
+      }
     }
 
-    await step(input.dryRun, log, `git checkout ${production}`, () => git.checkout(production));
+    await step(
+      input.dryRun,
+      log,
+      locale,
+      git,
+      t(locale, "logCheckout", { name: production }),
+      `git checkout ${production}`,
+      () => git.checkout(production)
+    );
 
     if (input.deleteMergedBranches) {
       const protectedBranches = new Set([
@@ -179,34 +276,50 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
           log("warn", t(locale, "notDeletingProtected", { name: branch }));
           continue;
         }
-        await step(input.dryRun, log, `git push origin --delete ${branch} && git branch -D ${branch}`, async () => {
-          try {
-            await git.deleteRemoteBranch(branch);
-          } catch (error) {
-            log("warn", t(locale, "remoteError", { name: branch, error: formatError(error) }));
+        await step(
+          input.dryRun,
+          log,
+          locale,
+          git,
+          t(locale, "logDeleteBranch", { name: branch }),
+          `git push origin --delete ${branch} && git branch -D ${branch}`,
+          async () => {
+            try {
+              await git.deleteRemoteBranch(branch);
+            } catch (error) {
+              log("warn", t(locale, "remoteError", { name: branch, error: formatError(error) }));
+            }
+            try {
+              await git.deleteLocalBranch(branch);
+            } catch (error) {
+              log("warn", t(locale, "localError", { name: branch, error: formatError(error) }));
+            }
           }
-          try {
-            await git.deleteLocalBranch(branch);
-          } catch (error) {
-            log("warn", t(locale, "localError", { name: branch, error: formatError(error) }));
-          }
-        });
+        );
       }
     }
 
     if (input.deleteReleaseBranch) {
-      await step(input.dryRun, log, `git push origin --delete ${releaseBranch} && git branch -D ${releaseBranch}`, async () => {
-        try {
-          await git.deleteRemoteBranch(releaseBranch);
-        } catch (error) {
-          log("warn", t(locale, "remoteError", { name: releaseBranch, error: formatError(error) }));
+      await step(
+        input.dryRun,
+        log,
+        locale,
+        git,
+        t(locale, "logDeleteRelease", { name: releaseBranch }),
+        `git push origin --delete ${releaseBranch} && git branch -D ${releaseBranch}`,
+        async () => {
+          try {
+            await git.deleteRemoteBranch(releaseBranch);
+          } catch (error) {
+            log("warn", t(locale, "remoteError", { name: releaseBranch, error: formatError(error) }));
+          }
+          try {
+            await git.deleteLocalBranch(releaseBranch);
+          } catch (error) {
+            log("warn", t(locale, "localError", { name: releaseBranch, error: formatError(error) }));
+          }
         }
-        try {
-          await git.deleteLocalBranch(releaseBranch);
-        } catch (error) {
-          log("warn", t(locale, "localError", { name: releaseBranch, error: formatError(error) }));
-        }
-      });
+      );
     }
 
     log("ok", t(locale, "releaseDone", { version }));
@@ -216,9 +329,9 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
     log("error", message);
     const conflict = await detectConflict(git, tag, error);
     if (conflict) {
-      log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: conflict.files.join(", ") || "-" }));
+      return stopOnConflict(logs, releaseBranch, tag, "main", conflict, locale, log);
     }
-    return { ok: false, logs, releaseBranch, tag, productionBranch: "main", conflict };
+    return { ok: false, logs, releaseBranch, tag, productionBranch: "main" };
   }
 }
 
@@ -244,9 +357,9 @@ export async function runResumeTagMerge(input: ResumeTagInput, onLog?: Logger): 
     }
 
     log("info", input.dryRun ? t(locale, "dryRunMode") : t(locale, "resumingTag", { tag }));
-    log("info", `repository: ${input.repoPath}`);
+    log("info", `${t(locale, "historyRepo")}: ${input.repoPath}`);
 
-    await step(input.dryRun, log, "git fetch --all --prune", () => git.fetch());
+    await step(input.dryRun, log, locale, git, t(locale, "logFetch"), "git fetch --all --prune", () => git.fetch());
 
     if (!input.dryRun && !(await git.hasTag(tag))) {
       throw new Error(t(locale, "tagNotFound", { tag }));
@@ -257,55 +370,64 @@ export async function runResumeTagMerge(input: ResumeTagInput, onLog?: Logger): 
       const files = await git.conflictedFiles();
       if (files.length) {
         const conflict = { branch: current || targets[0], files, tag };
-        log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: files.join(", ") }));
-        return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: current || "main", conflict };
+        return stopOnConflict(logs, `release/${version}`, tag, current || "main", conflict, locale, log);
       }
-      await step(false, log, `git commit -m "Merge tag '${tag}'"`, () =>
-        git.commit(`Merge tag '${tag}' into ${current}`)
+      await step(
+        false,
+        log,
+        locale,
+        git,
+        t(locale, "logCommitMerge", { name: current }),
+        `git commit -m "Merge tag '${tag}'"`,
+        () => git.commit(`Merge tag '${tag}' into ${current}`)
       );
-      await step(false, log, `git push origin ${current}`, () => git.push(current));
+      await step(
+        false,
+        log,
+        locale,
+        git,
+        t(locale, "logPushProduction", { name: current }),
+        `git push origin ${current}`,
+        () => git.push(current)
+      );
     } else if (!input.dryRun && (await git.isDirty())) {
       const files = await git.conflictedFiles();
       if (files.length) {
         const conflict = { branch: current || targets[0], files, tag };
-        log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: files.join(", ") }));
-        return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: current || "main", conflict };
+        return stopOnConflict(logs, `release/${version}`, tag, current || "main", conflict, locale, log);
       }
       throw new Error(t(locale, "dirtyWorkingTree"));
     }
 
     for (const branch of targets) {
-      const command = `git checkout ${branch} && git pull && git merge ${tag} --no-ff && git push`;
-      if (input.dryRun) {
-        log("info", `[dry-run] ${command}`);
-        continue;
-      }
-      log("info", command);
-      try {
-        await git.checkout(branch);
-        await git.pull();
-        const afterPull = await git.conflictedFiles();
-        if (afterPull.length) {
-          const conflict = { branch, files: afterPull, tag };
-          log("warn", t(locale, "conflictLog", { branch, files: afterPull.join(", ") }));
-          return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: branch, conflict };
-        }
-        if (await git.inMerge()) {
-          await git.commit(`Merge tag '${tag}' into ${branch}`);
-        } else {
-          await git.merge(tag, `Merge tag '${tag}' into ${branch}`);
-        }
-        await git.push(branch);
-        log("ok", `ok · ${command}`);
-      } catch (error) {
-        const conflict = await detectConflict(git, tag, error);
-        if (conflict) {
-          conflict.branch = branch;
-          log("error", formatError(error));
-          log("warn", t(locale, "conflictLog", { branch, files: conflict.files.join(", ") || "-" }));
-          return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: branch, conflict };
-        }
-        throw error;
+      const conflict = await step(
+        input.dryRun,
+        log,
+        locale,
+        git,
+        t(locale, "logMergeTag", { tag, name: branch }),
+        `git checkout ${branch} && git pull && git merge ${tag} --no-ff && git push`,
+        async () => {
+          await git.checkout(branch);
+          await git.pull();
+          const afterPull = await git.conflictedFiles();
+          if (afterPull.length) {
+            throw Object.assign(new Error(t(locale, "mergeStopped", { name: branch })), {
+              conflictFiles: afterPull,
+              conflictBranch: branch,
+            });
+          }
+          if (await git.inMerge()) {
+            await git.commit(`Merge tag '${tag}' into ${branch}`);
+          } else {
+            await git.merge(tag, `Merge tag '${tag}' into ${branch}`);
+          }
+          await git.push(branch);
+        },
+        branch
+      );
+      if (conflict) {
+        return stopOnConflict(logs, `release/${version}`, tag, branch, conflict, locale, log);
       }
     }
 
@@ -316,20 +438,60 @@ export async function runResumeTagMerge(input: ResumeTagInput, onLog?: Logger): 
     log("error", message);
     const conflict = await detectConflict(git, tag, error);
     if (conflict) {
-      log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: conflict.files.join(", ") || "-" }));
+      return stopOnConflict(logs, `release/${version}`, tag, "main", conflict, locale, log);
     }
-    return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: "main", conflict };
+    return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: "main" };
   }
 }
 
-async function step(dryRun: boolean, log: Logger, command: string, run: () => Promise<unknown>): Promise<void> {
+function stopOnConflict(
+  logs: ReleaseLog[],
+  releaseBranch: string,
+  tag: string,
+  productionBranch: string,
+  conflict: ConflictInfo,
+  locale: Locale,
+  log: Logger
+): ReleaseResult {
+  conflict.tag = conflict.tag || tag;
+  log("error", t(locale, "mergeStopped", { name: conflict.branch }));
+  log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: conflict.files.join(", ") || "-" }));
+  return { ok: false, logs, releaseBranch, tag, productionBranch, conflict };
+}
+
+async function step(
+  dryRun: boolean,
+  log: Logger,
+  locale: Locale,
+  git: GitRepo,
+  title: string,
+  command: string,
+  run: () => Promise<unknown>,
+  mergeBranch?: string
+): Promise<ConflictInfo | undefined> {
   if (dryRun) {
-    log("info", `[dry-run] ${command}`);
-    return;
+    log("info", `${title}\n[dry-run] ${command}`);
+    return undefined;
   }
-  log("info", command);
-  await run();
-  log("ok", `ok · ${command}`);
+  log("info", `${title}\n${command}`);
+  try {
+    await run();
+    const leftover = await git.conflictedFiles();
+    if (leftover.length) {
+      return { branch: mergeBranch || (await git.currentBranch().catch(() => "")), files: leftover, tag: "" };
+    }
+    log("ok", t(locale, "logStepOk", { title }));
+    return undefined;
+  } catch (error) {
+    const conflict = await detectConflict(git, "", error);
+    if (conflict) {
+      if (mergeBranch) {
+        conflict.branch = mergeBranch;
+      }
+      return conflict;
+    }
+    throw error;
+  }
 }
 
 function unique(values: string[]): string[] {

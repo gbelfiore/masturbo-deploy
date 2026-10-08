@@ -18,18 +18,87 @@ export const DEFAULT_HEADER_TOOLS: HeaderTools = {
   deleteRelease: true,
 };
 
+function asHeaderTools(value: unknown): HeaderTools | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const raw = value as Partial<HeaderTools>;
+  if (
+    typeof raw.reuseRelease !== "boolean" &&
+    typeof raw.dryRun !== "boolean" &&
+    typeof raw.deleteMerged !== "boolean" &&
+    typeof raw.deleteRelease !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    reuseRelease: raw.reuseRelease === true,
+    dryRun: raw.dryRun === true,
+    deleteMerged: raw.deleteMerged === true,
+    deleteRelease: raw.deleteRelease === true,
+  };
+}
+
+function toolsFile(context: vscode.ExtensionContext): vscode.Uri {
+  return vscode.Uri.joinPath(context.globalStorageUri, "header-tools.json");
+}
+
 export function loadHeaderTools(context: vscode.ExtensionContext): HeaderTools {
-  const saved = context.globalState.get<Partial<HeaderTools>>(TOOLS_KEY, {});
-  return { ...DEFAULT_HEADER_TOOLS, ...saved };
+  return asHeaderTools(context.globalState.get(TOOLS_KEY)) ?? { ...DEFAULT_HEADER_TOOLS };
+}
+
+export async function loadHeaderToolsAsync(context: vscode.ExtensionContext): Promise<HeaderTools> {
+  const fromState = asHeaderTools(context.globalState.get(TOOLS_KEY));
+  if (fromState) {
+    return fromState;
+  }
+  try {
+    const bytes = await vscode.workspace.fs.readFile(toolsFile(context));
+    const parsed = JSON.parse(Buffer.from(bytes).toString("utf8"));
+    const fromFile = asHeaderTools(parsed);
+    if (fromFile) {
+      await context.globalState.update(TOOLS_KEY, fromFile);
+      return fromFile;
+    }
+  } catch {
+    // first run
+  }
+  return { ...DEFAULT_HEADER_TOOLS };
 }
 
 export async function saveHeaderTools(context: vscode.ExtensionContext, tools: HeaderTools): Promise<void> {
-  await context.globalState.update(TOOLS_KEY, tools);
+  const next: HeaderTools = {
+    reuseRelease: tools.reuseRelease === true,
+    dryRun: tools.dryRun === true,
+    deleteMerged: tools.deleteMerged === true,
+    deleteRelease: tools.deleteRelease === true,
+  };
+  await context.globalState.update(TOOLS_KEY, next);
+  try {
+    await vscode.workspace.fs.createDirectory(context.globalStorageUri);
+    await vscode.workspace.fs.writeFile(toolsFile(context), Buffer.from(JSON.stringify(next), "utf8"));
+  } catch {
+    // globalState is enough
+  }
 }
 
 export interface RepoSelection {
   mergeBranches: string[];
   targetBranches: string[];
+  sourceBranch?: string;
+}
+
+export function defaultSource(branches: string[], saved?: string): string {
+  if (saved && branches.includes(saved)) {
+    return saved;
+  }
+  if (branches.includes("develop")) {
+    return "develop";
+  }
+  if (branches.includes("dev")) {
+    return "dev";
+  }
+  return branches[0] || "develop";
 }
 
 export function loadSelection(context: vscode.ExtensionContext, repoPath: string): RepoSelection | undefined {

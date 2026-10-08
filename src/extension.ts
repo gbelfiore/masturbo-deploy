@@ -4,12 +4,19 @@ import { RepoTreeProvider } from "./repos";
 
 export function activate(context: vscode.ExtensionContext): void {
   const repos = new RepoTreeProvider();
+  const tree = vscode.window.createTreeView("releaseDeploy.repos", {
+    treeDataProvider: repos,
+  });
   context.subscriptions.push(
-    vscode.window.createTreeView("releaseDeploy.repos", {
-      treeDataProvider: repos,
+    tree,
+    tree.onDidChangeSelection((event) => {
+      const picked = event.selection[0];
+      if (picked) {
+        ReleasePanel.show(context, picked.repo.path);
+      }
     }),
-    vscode.commands.registerCommand("releaseDeploy.open", () => {
-      ReleasePanel.show(context);
+    vscode.commands.registerCommand("releaseDeploy.open", (repoPath?: string) => {
+      ReleasePanel.show(context, typeof repoPath === "string" ? repoPath : undefined);
     }),
     vscode.commands.registerCommand("releaseDeploy.refreshRepos", () => repos.refresh())
   );
