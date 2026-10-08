@@ -1,4 +1,5 @@
 import { GitError, GitRepo } from "./git";
+import { Locale, t } from "./i18n";
 import { bumpPackageFiles } from "./version";
 import * as fs from "fs";
 import * as path from "path";
@@ -12,6 +13,7 @@ export interface ReleaseInput {
   dryRun: boolean;
   deleteMergedBranches: boolean;
   deleteReleaseBranch: boolean;
+  locale: Locale;
 }
 
 export interface ReleaseLog {
@@ -25,6 +27,21 @@ export interface ReleaseResult {
   releaseBranch: string;
   tag: string;
   productionBranch: string;
+  conflict?: ConflictInfo;
+}
+
+export interface ResumeTagInput {
+  repoPath: string;
+  version: string;
+  targetBranches: string[];
+  dryRun: boolean;
+  locale: Locale;
+}
+
+export interface ConflictInfo {
+  branch: string;
+  files: string[];
+  tag: string;
 }
 
 type Logger = (level: ReleaseLog["level"], message: string) => void;
@@ -40,36 +57,37 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
   const releaseBranch = `release/${version}`;
   const tag = version;
   const git = new GitRepo(input.repoPath);
+  const locale = input.locale;
 
   try {
     if (!version) {
-      throw new Error("inserisci un numero di release");
+      throw new Error(t(locale, "enterReleaseNumber"));
     }
 
-    log("info", input.dryRun ? "modalità dry-run: nessun write sul repository" : `avvio release ${version}`);
+    log("info", input.dryRun ? t(locale, "dryRunMode") : t(locale, "startingRelease", { version }));
     log("info", `repository: ${input.repoPath}`);
 
     if (!input.dryRun && (await git.isDirty())) {
-      throw new Error("working tree sporco: committa o stasha le modifiche prima di partire");
+      throw new Error(t(locale, "dirtyWorkingTree"));
     }
 
     await step(input.dryRun, log, "git fetch --all --prune", () => git.fetch());
 
     const source = await git.sourceBranch();
     const production = await git.productionBranch();
-    log("info", `branch di partenza: ${source}`);
-    log("info", `branch di produzione: ${production}`);
+    log("info", t(locale, "sourceBranch", { name: source }));
+    log("info", t(locale, "productionBranch", { name: production }));
 
     if (!(await git.hasBranch(source))) {
-      throw new Error(`branch ${source} non trovato`);
+      throw new Error(t(locale, "branchNotFound", { name: source }));
     }
     if (!(await git.hasBranch(production))) {
-      throw new Error(`branch ${production} non trovato`);
+      throw new Error(t(locale, "branchNotFound", { name: production }));
     }
 
     const releaseExists = await git.hasBranch(releaseBranch);
     if (releaseExists && !input.reuseReleaseBranch) {
-      throw new Error(`${releaseBranch} esiste già. Abilita "riusa branch release" per continuare su quello`);
+      throw new Error(t(locale, "releaseExists", { name: releaseBranch }));
     }
 
     await step(input.dryRun, log, `git checkout ${source} && git pull`, async () => {
@@ -87,22 +105,20 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
 
     if (!input.dryRun) {
       const files = bumpPackageFiles(input.repoPath, version);
-      log("ok", `versione aggiornata a ${version} in ${files.join(", ")}`);
+      log("ok", t(locale, "versionBumped", { version, files: files.join(", ") }));
       if (!files.includes("package-lock.json")) {
-        log("info", "package-lock.json assente: lascio yarn/pnpm lock invariati");
+        log("info", t(locale, "noPackageLock"));
       }
       await git.add(files);
       if (await git.isDirty()) {
         await git.commit(`chore: bump version to ${version}`);
-        log("ok", `commit versione ${version}`);
+        log("ok", t(locale, "committedVersion", { version }));
       } else {
-        log("info", "versione già allineata, nessun commit");
+        log("info", t(locale, "versionUnchanged"));
       }
     } else {
       const lock = fs.existsSync(path.join(input.repoPath, "package-lock.json"));
-      log("info", lock
-        ? `[dry-run] aggiornerei package.json e package-lock.json a ${version}`
-        : `[dry-run] aggiornerei solo package.json a ${version} (niente package-lock.json)`);
+      log("info", t(locale, lock ? "dryRunBoth" : "dryRunPkgOnly", { version }));
     }
 
     for (const branch of unique(input.mergeBranches)) {
@@ -126,7 +142,7 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
     await step(input.dryRun, log, `git push origin ${production}`, () => git.push(production));
 
     if (await git.hasTag(tag)) {
-      log("warn", `tag ${tag} già presente, non lo ricreo`);
+      log("warn", t(locale, "tagExists", { tag }));
     } else {
       await step(input.dryRun, log, `git tag ${tag}`, () => git.tag(tag));
     }
@@ -160,19 +176,19 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
       ]);
       for (const branch of unique(input.mergeBranches)) {
         if (protectedBranches.has(branch)) {
-          log("warn", `non cancello ${branch}: branch protetto`);
+          log("warn", t(locale, "notDeletingProtected", { name: branch }));
           continue;
         }
         await step(input.dryRun, log, `git push origin --delete ${branch} && git branch -D ${branch}`, async () => {
           try {
             await git.deleteRemoteBranch(branch);
           } catch (error) {
-            log("warn", `remoto ${branch}: ${formatError(error)}`);
+            log("warn", t(locale, "remoteError", { name: branch, error: formatError(error) }));
           }
           try {
             await git.deleteLocalBranch(branch);
           } catch (error) {
-            log("warn", `locale ${branch}: ${formatError(error)}`);
+            log("warn", t(locale, "localError", { name: branch, error: formatError(error) }));
           }
         });
       }
@@ -183,22 +199,126 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
         try {
           await git.deleteRemoteBranch(releaseBranch);
         } catch (error) {
-          log("warn", `remoto ${releaseBranch}: ${formatError(error)}`);
+          log("warn", t(locale, "remoteError", { name: releaseBranch, error: formatError(error) }));
         }
         try {
           await git.deleteLocalBranch(releaseBranch);
         } catch (error) {
-          log("warn", `locale ${releaseBranch}: ${formatError(error)}`);
+          log("warn", t(locale, "localError", { name: releaseBranch, error: formatError(error) }));
         }
       });
     }
 
-    log("ok", `release ${version} completata`);
+    log("ok", t(locale, "releaseDone", { version }));
     return { ok: true, logs, releaseBranch, tag, productionBranch: production };
   } catch (error) {
     const message = formatError(error);
     log("error", message);
-    return { ok: false, logs, releaseBranch, tag, productionBranch: "main" };
+    const conflict = await detectConflict(git, tag, error);
+    if (conflict) {
+      log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: conflict.files.join(", ") || "-" }));
+    }
+    return { ok: false, logs, releaseBranch, tag, productionBranch: "main", conflict };
+  }
+}
+
+export async function runResumeTagMerge(input: ResumeTagInput, onLog?: Logger): Promise<ReleaseResult> {
+  const logs: ReleaseLog[] = [];
+  const log: Logger = (level, message) => {
+    logs.push({ level, message });
+    onLog?.(level, message);
+  };
+
+  const version = input.version.trim();
+  const tag = version;
+  const git = new GitRepo(input.repoPath);
+  const locale = input.locale;
+  const targets = unique(input.targetBranches);
+
+  try {
+    if (!version) {
+      throw new Error(t(locale, "enterReleaseNumber"));
+    }
+    if (!targets.length) {
+      throw new Error(t(locale, "noTargetBranches"));
+    }
+
+    log("info", input.dryRun ? t(locale, "dryRunMode") : t(locale, "resumingTag", { tag }));
+    log("info", `repository: ${input.repoPath}`);
+
+    await step(input.dryRun, log, "git fetch --all --prune", () => git.fetch());
+
+    if (!input.dryRun && !(await git.hasTag(tag))) {
+      throw new Error(t(locale, "tagNotFound", { tag }));
+    }
+
+    const current = await git.currentBranch().catch(() => "");
+    if (!input.dryRun && (await git.inMerge())) {
+      const files = await git.conflictedFiles();
+      if (files.length) {
+        const conflict = { branch: current || targets[0], files, tag };
+        log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: files.join(", ") }));
+        return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: current || "main", conflict };
+      }
+      await step(false, log, `git commit -m "Merge tag '${tag}'"`, () =>
+        git.commit(`Merge tag '${tag}' into ${current}`)
+      );
+      await step(false, log, `git push origin ${current}`, () => git.push(current));
+    } else if (!input.dryRun && (await git.isDirty())) {
+      const files = await git.conflictedFiles();
+      if (files.length) {
+        const conflict = { branch: current || targets[0], files, tag };
+        log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: files.join(", ") }));
+        return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: current || "main", conflict };
+      }
+      throw new Error(t(locale, "dirtyWorkingTree"));
+    }
+
+    for (const branch of targets) {
+      const command = `git checkout ${branch} && git pull && git merge ${tag} --no-ff && git push`;
+      if (input.dryRun) {
+        log("info", `[dry-run] ${command}`);
+        continue;
+      }
+      log("info", command);
+      try {
+        await git.checkout(branch);
+        await git.pull();
+        const afterPull = await git.conflictedFiles();
+        if (afterPull.length) {
+          const conflict = { branch, files: afterPull, tag };
+          log("warn", t(locale, "conflictLog", { branch, files: afterPull.join(", ") }));
+          return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: branch, conflict };
+        }
+        if (await git.inMerge()) {
+          await git.commit(`Merge tag '${tag}' into ${branch}`);
+        } else {
+          await git.merge(tag, `Merge tag '${tag}' into ${branch}`);
+        }
+        await git.push(branch);
+        log("ok", `ok · ${command}`);
+      } catch (error) {
+        const conflict = await detectConflict(git, tag, error);
+        if (conflict) {
+          conflict.branch = branch;
+          log("error", formatError(error));
+          log("warn", t(locale, "conflictLog", { branch, files: conflict.files.join(", ") || "-" }));
+          return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: branch, conflict };
+        }
+        throw error;
+      }
+    }
+
+    log("ok", t(locale, "resumeMergeDone", { tag }));
+    return { ok: true, logs, releaseBranch: `release/${version}`, tag, productionBranch: targets[0] };
+  } catch (error) {
+    const message = formatError(error);
+    log("error", message);
+    const conflict = await detectConflict(git, tag, error);
+    if (conflict) {
+      log("warn", t(locale, "conflictLog", { branch: conflict.branch, files: conflict.files.join(", ") || "-" }));
+    }
+    return { ok: false, logs, releaseBranch: `release/${version}`, tag, productionBranch: "main", conflict };
   }
 }
 
@@ -225,4 +345,20 @@ function formatError(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function isConflictText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return lower.includes("conflict") || lower.includes("unmerged") || lower.includes("fix them") || lower.includes("fix conflicts");
+}
+
+async function detectConflict(git: GitRepo, tag: string, error: unknown): Promise<ConflictInfo | undefined> {
+  const extra = error as { conflictFiles?: string[]; conflictBranch?: string };
+  const files = extra.conflictFiles?.length ? extra.conflictFiles : await git.conflictedFiles();
+  const text = formatError(error);
+  if (!files.length && !isConflictText(text) && extra.conflictFiles === undefined) {
+    return undefined;
+  }
+  const branch = extra.conflictBranch || (await git.currentBranch().catch(() => ""));
+  return { branch, files, tag };
 }

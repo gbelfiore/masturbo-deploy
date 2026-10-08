@@ -8,8 +8,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.createTreeView("releaseDeploy.repos", {
       treeDataProvider: repos,
     }),
-    vscode.commands.registerCommand("releaseDeploy.open", (repoPath?: string) => {
-      ReleasePanel.show(context, typeof repoPath === "string" ? repoPath : undefined);
+    vscode.commands.registerCommand("releaseDeploy.open", () => {
+      ReleasePanel.show(context);
     }),
     vscode.commands.registerCommand("releaseDeploy.refreshRepos", () => repos.refresh())
   );

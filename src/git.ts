@@ -27,7 +27,7 @@ export class GitRepo {
     } catch (error) {
       const err = error as { message?: string; stderr?: string };
       throw new GitError(
-        err.message ?? "comando git fallito",
+        err.message ?? "git command failed",
         String(err.stderr ?? ""),
         `git ${args.join(" ")}`
       );
@@ -41,6 +41,24 @@ export class GitRepo {
   async isDirty(): Promise<boolean> {
     const status = await this.run(["status", "--porcelain"]);
     return status.length > 0;
+  }
+
+  async inMerge(): Promise<boolean> {
+    try {
+      await this.run(["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async conflictedFiles(): Promise<string[]> {
+    try {
+      const out = await this.run(["diff", "--name-only", "--diff-filter=U"]);
+      return out ? out.split("\n").map((line) => line.trim()).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
   }
 
   async branches(): Promise<string[]> {
@@ -102,7 +120,7 @@ export class GitRepo {
     if (await this.hasRemoteBranch(branch)) {
       return this.run(["checkout", "-B", branch, `origin/${branch}`]);
     }
-    throw new GitError(`branch ${branch} non trovato`, "", `git checkout ${branch}`);
+    throw new GitError(`branch ${branch} not found`, "", `git checkout ${branch}`);
   }
 
   async checkoutNew(name: string, from: string): Promise<string> {

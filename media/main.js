@@ -18,11 +18,17 @@ const dryRun = document.getElementById("dryRun");
 const deleteMerged = document.getElementById("deleteMerged");
 const deleteRelease = document.getElementById("deleteRelease");
 const startBtn = document.getElementById("start");
+const resumeBtn = document.getElementById("resumeTag");
 const refreshBtn = document.getElementById("refresh");
 const logEl = document.getElementById("log");
+const langSelect = document.getElementById("lang");
 
 let running = false;
+let runningMode = "";
 let currentVersion = "";
+let locale = "en";
+let i18n = {};
+let lastRepoState = null;
 
 refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh" }));
 repoSelect.addEventListener("change", () => {
@@ -38,11 +44,18 @@ document.querySelectorAll("[data-tree]").forEach((btn) => {
   });
 });
 
+langSelect.addEventListener("change", () => {
+  vscode.postMessage({ type: "setLanguage", locale: langSelect.value });
+});
+[reuse, dryRun, deleteMerged, deleteRelease].forEach((box) => {
+  box.addEventListener("change", persistHeaderTools);
+});
+
 startBtn.addEventListener("click", () => {
   if (running) return;
   const version = versionInput.value.trim();
   if (!version) {
-    appendLog("error", "inserisci la nuova versione");
+    appendLog("error", msg("enterVersion"));
     return;
   }
   vscode.postMessage({
@@ -56,28 +69,63 @@ startBtn.addEventListener("click", () => {
     deleteMergedBranches: deleteMerged.checked,
     deleteReleaseBranch: deleteRelease.checked,
   });
-  setRunning(true);
+  setRunning(true, "start");
+});
+
+resumeBtn.addEventListener("click", () => {
+  if (running) return;
+  const version = versionInput.value.trim();
+  if (!version) {
+    appendLog("error", msg("enterVersion"));
+    return;
+  }
+  const targetBranches = checked(targetBox);
+  if (!targetBranches.length) {
+    appendLog("error", msg("noTargetBranches"));
+    return;
+  }
+  vscode.postMessage({
+    type: "resumeTag",
+    repoPath: repoSelect.value,
+    version,
+    targetBranches,
+    dryRun: dryRun.checked,
+  });
+  setRunning(true, "resume");
 });
 
 window.addEventListener("message", (event) => {
-  const msg = event.data;
-  if (msg.type === "repos") {
+  const data = event.data;
+  if (data.type === "i18n") {
+    locale = data.locale || "en";
+    i18n = data.messages || {};
+    langSelect.value = locale;
+    applyI18n();
+    return;
+  }
+  if (data.type === "headerTools") {
+    applyHeaderTools(data.tools);
+    return;
+  }
+  if (data.type === "repos") {
+    lastRepoState = data.repos.length ? lastRepoState : { error: msg("noGitRepo") };
     repoSelect.innerHTML = "";
-    for (const repo of msg.repos) {
+    for (const repo of data.repos) {
       const option = document.createElement("option");
       option.value = repo.path;
       option.textContent = `${repo.name} — ${repo.path}`;
-      if (repo.path === msg.selected) option.selected = true;
+      if (repo.path === data.selected) option.selected = true;
       repoSelect.appendChild(option);
     }
-    if (!msg.repos.length) {
-      setPills(["nessun repository git nel workspace"]);
+    if (!data.repos.length) {
+      setPills([msg("noGitRepo")]);
     }
     return;
   }
-  if (msg.type === "repoState") {
-    if (msg.error) {
-      setPills([msg.error], true);
+  if (data.type === "repoState") {
+    lastRepoState = data;
+    if (data.error) {
+      setPills([data.error], true);
       mergeBox.innerHTML = "";
       targetBox.innerHTML = "";
       mergeSearch.value = "";
@@ -89,39 +137,77 @@ window.addEventListener("message", (event) => {
       fromVersion.textContent = "—";
       return;
     }
-    currentVersion = msg.currentVersion || "";
-    fromVersion.textContent = currentVersion || "n/d";
+    currentVersion = data.currentVersion || "";
+    fromVersion.textContent = currentVersion || msg("na");
     versionInput.value = currentVersion ? nextPatch(currentVersion) : "";
     versionInput.placeholder = currentVersion ? nextPatch(currentVersion) : "x.y.z";
     updateHint(versionInput.value);
-    const pills = [
-      `branch ${msg.current}`,
-      `base ${msg.source}`,
-      `produzione ${msg.production}`,
-    ];
-    if (msg.dirty) pills.push("working tree sporco");
-    setPills(pills, Boolean(msg.dirty));
+    applyRepoPills(data);
     mergeSearch.value = "";
     targetSearch.value = "";
-    fillChecks(mergeBox, msg.branches, msg.savedMerge || [], mergeSelected);
-    fillChecks(targetBox, msg.branches, msg.savedTargets || defaultTargets(msg.branches), targetSelected);
+    fillChecks(mergeBox, data.branches, data.savedMerge || [], mergeSelected);
+    fillChecks(targetBox, data.branches, data.savedTargets || defaultTargets(data.branches), targetSelected);
     filterChecks(mergeBox, "", mergeEmpty);
     filterChecks(targetBox, "", targetEmpty);
     return;
   }
-  if (msg.type === "log") {
-    appendLog(msg.level, msg.message);
+  if (data.type === "log") {
+    appendLog(data.level, data.message);
     return;
   }
-  if (msg.type === "done") {
+  if (data.type === "done") {
     setRunning(false);
   }
 });
 
+function msg(key, vars) {
+  let text = i18n[key] || key;
+  if (vars) {
+    for (const [name, value] of Object.entries(vars)) {
+      text = text.split(`{${name}}`).join(value);
+    }
+  }
+  return text;
+}
+
+function applyI18n() {
+  document.documentElement.lang = locale;
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = msg(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    el.placeholder = msg(el.dataset.i18nPlaceholder);
+  });
+  document.querySelectorAll(".chevron").forEach((el) => {
+    el.title = msg("expandCollapse");
+  });
+  document.querySelectorAll(".badge-x").forEach((el) => {
+    el.title = msg("remove");
+  });
+  updateHint(versionInput.value);
+  startBtn.textContent = running && runningMode === "start" ? msg("running") : msg("startRelease");
+  resumeBtn.textContent = running && runningMode === "resume" ? msg("resumeMergeRunning") : msg("resumeMergeTag");
+  if (lastRepoState) applyRepoPills(lastRepoState);
+}
+
+function applyRepoPills(state) {
+  if (state.error) {
+    setPills([state.error], true);
+    return;
+  }
+  const pills = [
+    msg("pillBranch", { name: state.current }),
+    msg("pillBase", { name: state.source }),
+    msg("pillProduction", { name: state.production }),
+  ];
+  if (state.dirty) pills.push(msg("dirtyTree"));
+  setPills(pills, Boolean(state.dirty));
+}
+
 function updateHint(version) {
   const from = currentVersion || "x.y.z";
   const to = (version || "").trim() || "x.y.z";
-  versionHint.innerHTML = `${from} → ${to}: crea <code>release/${to}</code>, aggiorna package.json (e package-lock.json solo se c'è) e usa <code>${to}</code> come tag git.`;
+  versionHint.innerHTML = msg("versionHint", { from, to });
 }
 
 function nextPatch(version) {
@@ -195,7 +281,7 @@ function renderNode(node, selected, depth) {
     const chevron = document.createElement("button");
     chevron.type = "button";
     chevron.className = "chevron";
-    chevron.title = "Espandi / comprimi";
+    chevron.title = msg("expandCollapse");
     row.appendChild(chevron);
   } else {
     const spacer = document.createElement("span");
@@ -268,7 +354,7 @@ function renderSelected(container) {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "badge-x";
-    remove.title = "Rimuovi";
+    remove.title = msg("remove");
     remove.textContent = "×";
     remove.addEventListener("click", () => {
       const input = [...container.querySelectorAll("input[data-branch]")].find((el) => el.dataset.branch === value);
@@ -316,6 +402,26 @@ function defaultTargets(branches) {
   return ["develop", "unstable", "staging"].filter((name) => branches.includes(name));
 }
 
+function applyHeaderTools(tools) {
+  if (!tools) return;
+  reuse.checked = Boolean(tools.reuseRelease);
+  dryRun.checked = Boolean(tools.dryRun);
+  deleteMerged.checked = Boolean(tools.deleteMerged);
+  deleteRelease.checked = Boolean(tools.deleteRelease);
+}
+
+function persistHeaderTools() {
+  vscode.postMessage({
+    type: "saveHeaderTools",
+    tools: {
+      reuseRelease: reuse.checked,
+      dryRun: dryRun.checked,
+      deleteMerged: deleteMerged.checked,
+      deleteRelease: deleteRelease.checked,
+    },
+  });
+}
+
 function persistSelection() {
   if (!repoSelect.value) return;
   vscode.postMessage({
@@ -334,10 +440,13 @@ function appendLog(level, message) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function setRunning(value) {
+function setRunning(value, mode) {
   running = value;
+  runningMode = value ? mode || "" : "";
   startBtn.disabled = value;
-  startBtn.textContent = value ? "In corso..." : "Avvia release";
+  resumeBtn.disabled = value;
+  startBtn.textContent = value && runningMode === "start" ? msg("running") : msg("startRelease");
+  resumeBtn.textContent = value && runningMode === "resume" ? msg("resumeMergeRunning") : msg("resumeMergeTag");
 }
 
 vscode.postMessage({ type: "ready" });

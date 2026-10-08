@@ -1,8 +1,8 @@
 {
   "name": "masturbodeploy",
   "displayName": "MasTurbo Deploy",
-  "description": "Crea il branch release, aggiorna la versione e gestisce merge e deploy dai repository del workspace",
-  "version": "0.1.0",
+  "description": "Creates the release branch, bumps the version, and handles merge and deploy for workspace repositories",
+  "version": "1.0.0",
   "publisher": "giovanni-belfiore",
   "author": "Giovanni Belfiore",
   "icon": "media/icon.png",
@@ -16,12 +16,12 @@
     "commands": [
       {
         "command": "releaseDeploy.open",
-        "title": "MasTurbo Deploy: Apri wizard",
+        "title": "MasTurbo Deploy: Open wizard",
         "icon": "$(rocket)"
       },
       {
         "command": "releaseDeploy.refreshRepos",
-        "title": "MasTurbo Deploy: Aggiorna repository",
+        "title": "MasTurbo Deploy: Refresh repositories",
         "icon": "$(refresh)"
       }
     ],
