@@ -9,7 +9,7 @@ import { LOCALES, Locale, isLocale, loadLocale, MESSAGES, saveLocale, t } from "
 
 type WebviewMessage =
   | { type: "ready" }
-  | { type: "refresh" }
+  | { type: "refresh"; repoPath?: string }
   | { type: "selectRepo"; path: string }
   | { type: "setLanguage"; locale: string }
   | { type: "saveHeaderTools"; tools: HeaderTools }
@@ -91,9 +91,8 @@ export class ReleasePanel {
       return;
     }
     if (message.type === "refresh") {
-      await this.sendI18n();
-      await this.sendHistory();
-      await this.sendRepos();
+      this.selectedRepo = message.repoPath || this.selectedRepo;
+      this.panel.webview.html = this.html();
       return;
     }
     if (message.type === "saveHeaderTools") {
@@ -343,6 +342,7 @@ export class ReleasePanel {
               <button type="button" id="navRelease" class="nav-btn is-active" data-i18n="navRelease">Release</button>
               <button type="button" id="navHistory" class="nav-btn" data-i18n="navHistory">History</button>
             </nav>
+            <button type="button" id="refreshAll" class="ghost header-refresh" data-i18n="refreshAll">Refresh</button>
             <label class="lang-wrap">
               <select id="lang" class="lang-select" aria-label="Language">${langOptions}</select>
             </label>

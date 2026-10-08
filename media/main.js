@@ -21,6 +21,7 @@ const deleteRelease = document.getElementById("deleteRelease");
 const startBtn = document.getElementById("start");
 const resumeBtn = document.getElementById("resumeTag");
 const refreshBtn = document.getElementById("refresh");
+const refreshAllBtn = document.getElementById("refreshAll");
 const logEl = document.getElementById("log");
 const langSelect = document.getElementById("lang");
 const navRelease = document.getElementById("navRelease");
@@ -44,7 +45,8 @@ let lastRepoState = null;
 let lastHistory = [];
 let selectedHistoryId = "";
 
-refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh" }));
+refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh", repoPath: repoSelect.value }));
+refreshAllBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh", repoPath: repoSelect.value }));
 repoSelect.addEventListener("change", () => {
   vscode.postMessage({ type: "selectRepo", path: repoSelect.value });
 });
