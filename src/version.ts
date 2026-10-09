@@ -34,7 +34,7 @@ export function latestVersion(...values: Array<string | undefined>): string | un
 export function bumpPackageFiles(repoRoot: string, version: string): string[] {
   const pkgPath = path.join(repoRoot, "package.json");
   if (!fs.existsSync(pkgPath)) {
-    throw new Error("package.json not found");
+    return [];
   }
 
   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as Record<string, unknown>;

@@ -31,9 +31,13 @@ const pageHistory = document.getElementById("page-history");
 const historyList = document.getElementById("historyList");
 const historyEmpty = document.getElementById("historyEmpty");
 const releaseNotes = document.getElementById("releaseNotes");
+const generateNotesBtn = document.getElementById("generateNotes");
 
 let running = false;
 let runningMode = "";
+let loadBusy = true;
+let releaseDone = false;
+let mergeFailed = false;
 let currentVersion = "";
 let locale = "en";
 let i18n = {};
@@ -41,13 +45,13 @@ let lastRepoState = null;
 let lastHistory = [];
 let lastHistoryError = "";
 let selectedHistoryId = "";
+let generatingNotes = false;
 
 refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh", repoPath: repoSelect.value }));
 refreshAllBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh", repoPath: repoSelect.value }));
 repoSelect.addEventListener("change", () => {
   vscode.postMessage({ type: "selectRepo", path: repoSelect.value });
 });
-sourceSelect.addEventListener("change", persistSelection);
 versionInput.addEventListener("input", () => updateHint(versionInput.value));
 releaseNotes.addEventListener("input", persistSelection);
 mergeSearch.addEventListener("input", () => filterChecks(mergeBox, mergeSearch.value, mergeEmpty));
@@ -77,7 +81,7 @@ if (rememberedTools) {
 }
 
 startBtn.addEventListener("click", () => {
-  if (running) return;
+  if (running || loadBusy || releaseDone) return;
   const version = versionInput.value.trim();
   if (!version) {
     appendLog("error", msg("enterVersion"));
@@ -104,8 +108,19 @@ startBtn.addEventListener("click", () => {
   setRunning(true, "start");
 });
 
+generateNotesBtn.addEventListener("click", () => {
+  if (generatingNotes || running || loadBusy || !repoSelect.value) return;
+  generatingNotes = true;
+  generateNotesBtn.disabled = true;
+  vscode.postMessage({
+    type: "generateNotes",
+    repoPath: repoSelect.value,
+    version: versionInput.value.trim(),
+  });
+});
+
 resumeBtn.addEventListener("click", () => {
-  if (running) return;
+  if (running || loadBusy || !mergeFailed) return;
   const version = versionInput.value.trim();
   if (!version) {
     appendLog("error", msg("enterVersion"));
@@ -164,8 +179,19 @@ window.addEventListener("message", (event) => {
     }
     return;
   }
+  if (data.type === "repoLoading") {
+    loadBusy = true;
+    releaseDone = false;
+    mergeFailed = false;
+    generatingNotes = false;
+    updateActionButtons();
+    return;
+  }
   if (data.type === "repoState") {
     lastRepoState = data;
+    loadBusy = false;
+    releaseDone = false;
+    mergeFailed = false;
     if (data.error) {
       setPills([data.error], true);
       mergeBox.innerHTML = "";
@@ -179,6 +205,7 @@ window.addEventListener("message", (event) => {
       sourceSelect.innerHTML = "";
       releaseNotes.value = "";
       fromVersion.textContent = "—";
+      updateActionButtons();
       return;
     }
     currentVersion = data.currentVersion || "";
@@ -190,19 +217,39 @@ window.addEventListener("message", (event) => {
     mergeSearch.value = "";
     targetSearch.value = "";
     fillSourceSelect(data.branches, data.savedSource || defaultSource(data.branches));
-    fillChecks(mergeBox, data.branches, data.savedMerge || [], mergeSelected);
+    fillChecks(mergeBox, data.branches, [], mergeSelected);
     fillChecks(targetBox, data.branches, data.savedTargets || defaultTargets(data.branches), targetSelected);
+    setCollapsed(mergeBox, true);
+    setCollapsed(targetBox, true);
     filterChecks(mergeBox, "", mergeEmpty);
     filterChecks(targetBox, "", targetEmpty);
     releaseNotes.value = data.savedNotes || "";
+    if (data.tools) applyHeaderTools(data.tools);
+    updateActionButtons();
+    return;
+  }
+  if (data.type === "notesGenerated") {
+    generatingNotes = false;
+    if (data.text) {
+      releaseNotes.value = data.text;
+      persistSelection();
+    }
+    updateActionButtons();
     return;
   }
   if (data.type === "log") {
     appendLog(data.level, data.message);
+    if (data.level === "warn" && generatingNotes) {
+      generatingNotes = false;
+      updateActionButtons();
+    }
     return;
   }
   if (data.type === "done") {
     setRunning(false);
+    releaseDone = data.ok === true;
+    mergeFailed = data.conflict === true;
+    updateActionButtons();
   }
 });
 
@@ -233,6 +280,7 @@ function applyI18n() {
   updateHint(versionInput.value);
   startBtn.textContent = running && runningMode === "start" ? msg("running") : msg("startRelease");
   resumeBtn.textContent = running && runningMode === "resume" ? msg("resumeMergeRunning") : msg("resumeMergeTag");
+  updateActionButtons();
   if (lastRepoState) applyRepoPills(lastRepoState);
   renderHistory();
 }
@@ -247,6 +295,7 @@ function applyRepoPills(state) {
     msg("pillBase", { name: state.source }),
     msg("pillProduction", { name: state.production }),
   ];
+  if (state.mtDeploy) pills.push(msg("pillMtDeploy"));
   if (state.dirty) pills.push(msg("dirtyTree"));
   setPills(pills, Boolean(state.dirty));
 }
@@ -382,7 +431,6 @@ function bindTree(container) {
   container.querySelectorAll("input[data-branch]").forEach((box) => {
     box.addEventListener("change", () => {
       renderSelected(container);
-      persistSelection();
     });
   });
   renderSelected(container);
@@ -407,7 +455,6 @@ function renderSelected(container) {
       const input = [...container.querySelectorAll("input[data-branch]")].find((el) => el.dataset.branch === value);
       if (input) input.checked = false;
       renderSelected(container);
-      persistSelection();
     });
     badge.append(text, remove);
     badgesEl.appendChild(badge);
@@ -446,7 +493,7 @@ function checked(container) {
 }
 
 function defaultTargets(branches) {
-  return ["develop", "unstable", "staging"].filter((name) => branches.includes(name));
+  return ["develop", "unstable", "staging", "production"].filter((name) => branches.includes(name));
 }
 
 function defaultSource(branches) {
@@ -499,9 +546,6 @@ function persistSelection() {
   vscode.postMessage({
     type: "saveSelection",
     repoPath: repoSelect.value,
-    mergeBranches: checked(mergeBox),
-    targetBranches: checked(targetBox),
-    sourceBranch: sourceSelect.value,
     releaseNotes: releaseNotes.value,
   });
 }
@@ -546,9 +590,13 @@ function renderHistory() {
     head.append(tag, status);
     const info = document.createElement("div");
     info.className = "history-item-info";
-    info.textContent = record.hasLocal
-      ? `${record.repoName} · ${formatWhen(record.at)} · ${record.kind === "resume" ? msg("historyKindResume") : msg("historyKindRelease")}`
-      : `${record.repoName} · ${formatWhen(record.at)}`;
+    const kind = record.hasLocal
+      ? record.kind === "resume"
+        ? msg("historyKindResume")
+        : msg("historyKindRelease")
+      : "";
+    const who = record.author ? record.author : "";
+    info.textContent = [record.repoName, formatWhen(record.at), kind, who].filter(Boolean).join(" · ");
     toggle.append(head, info);
     toggle.addEventListener("click", () => {
       selectedHistoryId = open ? "" : record.id;
@@ -567,6 +615,7 @@ function historyDetail(record) {
   meta.className = "history-meta";
   meta.appendChild(metaRow(msg("historyRepo"), record.repoName));
   meta.appendChild(metaRow(msg("historyWhen"), formatWhen(record.at)));
+  if (record.author) meta.appendChild(metaRow(msg("historyAuthor"), record.author));
   if (record.hasLocal) {
     meta.appendChild(
       metaRow(
@@ -670,10 +719,18 @@ function appendLog(level, message) {
 function setRunning(value, mode) {
   running = value;
   runningMode = value ? mode || "" : "";
-  startBtn.disabled = value;
-  resumeBtn.disabled = value;
-  startBtn.textContent = value && runningMode === "start" ? msg("running") : msg("startRelease");
-  resumeBtn.textContent = value && runningMode === "resume" ? msg("resumeMergeRunning") : msg("resumeMergeTag");
+  updateActionButtons();
+}
+
+function updateActionButtons() {
+  const busy = running || loadBusy;
+  const hasRepo = Boolean(repoSelect.value) && lastRepoState && !lastRepoState.error;
+  startBtn.disabled = busy || releaseDone || mergeFailed || !hasRepo;
+  resumeBtn.disabled = busy || !mergeFailed || !hasRepo;
+  generateNotesBtn.disabled = busy || generatingNotes || !hasRepo;
+  generateNotesBtn.textContent = generatingNotes ? msg("generatingNotes") : msg("generateNotes");
+  startBtn.textContent = running && runningMode === "start" ? msg("running") : msg("startRelease");
+  resumeBtn.textContent = running && runningMode === "resume" ? msg("resumeMergeRunning") : msg("resumeMergeTag");
 }
 
 vscode.postMessage({ type: "ready" });

@@ -1,91 +1,29 @@
+import * as fs from "fs";
 import * as vscode from "vscode";
+import { DEFAULT_HEADER_TOOLS, DEFAULT_TARGET_BRANCHES, ensureMtDeploy, HeaderTools, mtHistoryPath, saveMtTools, toolsFromConfig } from "./mtdeploy";
 
 const STORE_KEY = "masturbo.repoSelections";
-const TOOLS_KEY = "masturbo.headerTools";
-export const DEFAULT_TARGET_BRANCHES = ["develop", "unstable", "staging"];
+export { DEFAULT_HEADER_TOOLS, DEFAULT_TARGET_BRANCHES, HeaderTools };
 
-export interface HeaderTools {
-  reuseRelease: boolean;
-  dryRun: boolean;
-  deleteMerged: boolean;
-  deleteRelease: boolean;
+export function loadHeaderTools(repoPath?: string): HeaderTools {
+  if (!repoPath) {
+    return { ...DEFAULT_HEADER_TOOLS };
+  }
+  return toolsFromConfig(ensureMtDeploy(repoPath));
 }
 
-export const DEFAULT_HEADER_TOOLS: HeaderTools = {
-  reuseRelease: false,
-  dryRun: true,
-  deleteMerged: true,
-  deleteRelease: true,
-};
-
-function asHeaderTools(value: unknown): HeaderTools | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-  const raw = value as Partial<HeaderTools>;
-  if (
-    typeof raw.reuseRelease !== "boolean" &&
-    typeof raw.dryRun !== "boolean" &&
-    typeof raw.deleteMerged !== "boolean" &&
-    typeof raw.deleteRelease !== "boolean"
-  ) {
-    return undefined;
-  }
-  return {
-    reuseRelease: raw.reuseRelease === true,
-    dryRun: raw.dryRun === true,
-    deleteMerged: raw.deleteMerged === true,
-    deleteRelease: raw.deleteRelease === true,
-  };
+export async function loadHeaderToolsAsync(repoPath?: string): Promise<HeaderTools> {
+  return loadHeaderTools(repoPath);
 }
 
-function toolsFile(context: vscode.ExtensionContext): vscode.Uri {
-  return vscode.Uri.joinPath(context.globalStorageUri, "header-tools.json");
-}
-
-export function loadHeaderTools(context: vscode.ExtensionContext): HeaderTools {
-  return asHeaderTools(context.globalState.get(TOOLS_KEY)) ?? { ...DEFAULT_HEADER_TOOLS };
-}
-
-export async function loadHeaderToolsAsync(context: vscode.ExtensionContext): Promise<HeaderTools> {
-  const fromState = asHeaderTools(context.globalState.get(TOOLS_KEY));
-  if (fromState) {
-    return fromState;
+export async function saveHeaderTools(repoPath: string | undefined, tools: HeaderTools): Promise<void> {
+  if (!repoPath) {
+    return;
   }
-  try {
-    const bytes = await vscode.workspace.fs.readFile(toolsFile(context));
-    const parsed = JSON.parse(Buffer.from(bytes).toString("utf8"));
-    const fromFile = asHeaderTools(parsed);
-    if (fromFile) {
-      await context.globalState.update(TOOLS_KEY, fromFile);
-      return fromFile;
-    }
-  } catch {
-    // first run
-  }
-  return { ...DEFAULT_HEADER_TOOLS };
-}
-
-export async function saveHeaderTools(context: vscode.ExtensionContext, tools: HeaderTools): Promise<void> {
-  const next: HeaderTools = {
-    reuseRelease: tools.reuseRelease === true,
-    dryRun: tools.dryRun === true,
-    deleteMerged: tools.deleteMerged === true,
-    deleteRelease: tools.deleteRelease === true,
-  };
-  await context.globalState.update(TOOLS_KEY, next);
-  try {
-    await vscode.workspace.fs.createDirectory(context.globalStorageUri);
-    await vscode.workspace.fs.writeFile(toolsFile(context), Buffer.from(JSON.stringify(next), "utf8"));
-  } catch {
-    // globalState is enough
-  }
+  saveMtTools(repoPath, tools);
 }
 
 export interface RepoSelection {
-  mergeBranches: string[];
-  targetBranches: string[];
-  sourceBranch?: string;
   releaseNotes?: string;
 }
 
@@ -153,17 +91,57 @@ export interface DeployRecord {
   conflictBranch?: string;
   conflictFiles?: string[];
   githubUrl?: string;
+  author?: string;
+  githubTitle?: string;
+  githubBody?: string;
 }
 
 export function loadHistory(context: vscode.ExtensionContext, repoPath?: string): DeployRecord[] {
-  const all = context.globalState.get<DeployRecord[]>(HISTORY_KEY, []);
   if (!repoPath) {
-    return all;
+    return [];
   }
-  return all.filter((record) => record.repoPath === repoPath);
+  ensureMtDeploy(repoPath);
+  const fromFile = readHistoryFile(repoPath);
+  if (fromFile.length) {
+    return fromFile;
+  }
+  const migrated = context.globalState.get<DeployRecord[]>(HISTORY_KEY, []).filter((record) => record.repoPath === repoPath);
+  if (migrated.length) {
+    writeHistoryFile(repoPath, migrated);
+  }
+  return migrated;
 }
 
 export async function saveDeploy(context: vscode.ExtensionContext, record: DeployRecord): Promise<void> {
-  const all = [record, ...loadHistory(context)].slice(0, HISTORY_LIMIT);
-  await context.globalState.update(HISTORY_KEY, all);
+  const current = loadHistory(context, record.repoPath).filter((item) => item.id !== record.id);
+  writeHistoryFile(record.repoPath, capHistory([record, ...current]));
 }
+
+export function writeHistoryFile(repoPath: string, records: DeployRecord[]): void {
+  ensureMtDeploy(repoPath);
+  fs.writeFileSync(mtHistoryPath(repoPath), `${JSON.stringify({ version: 1, records: capHistory(records) }, null, 2)}\n`, "utf8");
+}
+
+function readHistoryFile(repoPath: string): DeployRecord[] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(mtHistoryPath(repoPath), "utf8"));
+    const rows = Array.isArray(raw) ? raw : raw?.records;
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+    return rows.filter((item) => item && typeof item === "object" && typeof item.tag === "string");
+  } catch {
+    return [];
+  }
+}
+
+function isLocalOnly(record: DeployRecord): boolean {
+  return record.dryRun === true || record.ok === false;
+}
+
+function capHistory(records: DeployRecord[]): DeployRecord[] {
+  const shared = records.filter((record) => !isLocalOnly(record));
+  const localOnly = records.filter(isLocalOnly).slice(0, HISTORY_LIMIT);
+  return [...shared, ...localOnly].sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+

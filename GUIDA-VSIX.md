@@ -26,7 +26,7 @@ npm run package
 Il file finisce in `releasevsix/` (cartella gitignore):
 
 ```text
-releasevsix/masturbodeploy-1.0.5.vsix
+releasevsix/masturbodeploy-1.0.7.vsix
 ```
 
 Il numero nel nome è la `version` di `package.json`. Se la alzi, il file si chiama di conseguenza.
@@ -34,7 +34,7 @@ Il numero nel nome è la `version` di `package.json`. Se la alzi, il file si chi
 ## 4. Installalo in locale su VS Code
 
 ```bash
-"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension ./releasevsix/masturbodeploy-1.0.5.vsix --force
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --profile gb-ide-profile --install-extension ./releasevsix/masturbodeploy-1.0.7.vsix --force
 ```
 
 Poi in VS Code: `Developer: Reload Window`.

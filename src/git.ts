@@ -218,12 +218,27 @@ export class GitRepo {
   }
 
   async latestVersionTag(): Promise<string | undefined> {
+    const tag = await this.latestTagName();
+    return tag ? tag.replace(/^v/i, "") : undefined;
+  }
+
+  async latestTagName(): Promise<string | undefined> {
     try {
       const out = await this.run(["tag", "--list", "--sort=-v:refname"]);
-      const tag = out.split("\n").map((line) => line.trim()).find(Boolean);
-      return tag ? tag.replace(/^v/i, "") : undefined;
+      return out.split("\n").map((line) => line.trim()).find(Boolean);
     } catch {
       return undefined;
+    }
+  }
+
+  async commitsSince(tag?: string): Promise<string> {
+    try {
+      if (tag) {
+        return await this.run(["log", `${tag}..HEAD`, "--pretty=format:%s"]);
+      }
+      return await this.run(["log", "-20", "--pretty=format:%s"]);
+    } catch {
+      return "";
     }
   }
 }

@@ -134,17 +134,23 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
 
     if (!input.dryRun) {
       const files = bumpPackageFiles(input.repoPath, version);
-      log("ok", t(locale, "versionBumped", { version, files: files.join(", ") }));
-      if (!files.includes("package-lock.json")) {
-        log("info", t(locale, "noPackageLock"));
-      }
-      await git.add(files);
-      if (await git.isDirty()) {
-        await git.commit(`chore: bump version to ${version}`);
-        log("ok", t(locale, "committedVersion", { version }));
+      if (!files.length) {
+        log("info", t(locale, "packageJsonSkipped"));
       } else {
-        log("info", t(locale, "versionUnchanged"));
+        log("ok", t(locale, "versionBumped", { version, files: files.join(", ") }));
+        if (!files.includes("package-lock.json")) {
+          log("info", t(locale, "noPackageLock"));
+        }
+        await git.add(files);
+        if (await git.isDirty()) {
+          await git.commit(`chore: bump version to ${version}`);
+          log("ok", t(locale, "committedVersion", { version }));
+        } else {
+          log("info", t(locale, "versionUnchanged"));
+        }
       }
+    } else if (!fs.existsSync(path.join(input.repoPath, "package.json"))) {
+      log("info", t(locale, "packageJsonSkipped"));
     } else {
       const lock = fs.existsSync(path.join(input.repoPath, "package-lock.json"));
       log("info", t(locale, lock ? "dryRunBoth" : "dryRunPkgOnly", { version }));
@@ -276,6 +282,7 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
         "master",
         "unstable",
         "staging",
+        "production",
       ]);
       for (const branch of unique(input.mergeBranches)) {
         if (protectedBranches.has(branch)) {
