@@ -2,9 +2,10 @@
   "name": "masturbodeploy",
   "displayName": "MasTurbo Deploy",
   "description": "Creates the release branch, bumps the version, and handles merge and deploy for workspace repositories",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "publisher": "MasTurboDeploy",
   "author": "Giovanni Belfiore",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/gbelfiore/masturbo-deploy.git"

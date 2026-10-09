@@ -156,6 +156,15 @@ export class GitRepo {
     return this.run(["push"]);
   }
 
+  async originUrl(): Promise<string | undefined> {
+    try {
+      const url = await this.run(["remote", "get-url", "origin"]);
+      return url || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async merge(ref: string, message?: string): Promise<string> {
     const args = ["merge", ref, "--no-ff"];
     if (message) {

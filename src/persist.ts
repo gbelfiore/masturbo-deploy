@@ -86,6 +86,7 @@ export interface RepoSelection {
   mergeBranches: string[];
   targetBranches: string[];
   sourceBranch?: string;
+  releaseNotes?: string;
 }
 
 export function defaultSource(branches: string[], saved?: string): string {
@@ -151,6 +152,7 @@ export interface DeployRecord {
   logs: DeployLogLine[];
   conflictBranch?: string;
   conflictFiles?: string[];
+  githubUrl?: string;
 }
 
 export function loadHistory(context: vscode.ExtensionContext, repoPath?: string): DeployRecord[] {

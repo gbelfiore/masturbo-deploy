@@ -57,6 +57,8 @@ Le tue scelte restano salvate. Lingue: Italiano, English, Español, Français, D
 
 **Branch che ricevono il tag** — produzione ce l’ha già. Qui scegli gli altri. Per ciascuno: `pull` → `merge <tag> --no-ff` → `push`.
 
+**Release notes** — textarea. Dopo una run riuscita diventa il body della GitHub Release (login GitHub di VS Code/Cursor). In dry-run o se origin non è GitHub, non creo niente.
+
 **Log** — ogni passo, il comando, l’esito. Verde ok, giallo ehm, rosso ci siamo fermati.
 
 ### Cosa succede quando premi Avvia
@@ -75,6 +77,7 @@ tag + push dei tag
 merge del tag sugli altri branch
 checkout produzione
 (opzionale) pulizia branch
+creo la GitHub Release con le note
 ```
 
 Se qualcosa va storto **mi fermo**. Non provo lo stesso e poi piangiamo insieme.
@@ -85,7 +88,7 @@ Un merge può litigare. Io interrompo, ti mostro branch e file, tu risolvi a man
 
 ### Storico
 
-Ogni deploy (vero o dry-run, riuscito o interrotto) resta salvato: tag, branch di origine, destinazione, data, esito, log. Per quando fra tre settimane qualcuno chiederà se `1.3.2` è finita anche su staging.
+Lo storico è la lista delle **GitHub Release**. Se questa macchina ha fatto il deploy con MasTurbo, sulla stessa scheda trovi anche branch, esito e log. Se la Release arriva solo da GitHub, vedi solo tag, note, data e link.
 
 ### Cosa non sono
 
@@ -99,8 +102,9 @@ Non sostituisco CI/CD. Non risolvo i conflitti al posto tuo. Non parto con il wo
 4. Conferma il branch di partenza
 5. Spunta le feature da mergiare
 6. Spunta i branch che devono prendere il tag
-7. **Avvia release**
-8. Log verde? Fatto. Altrimenti sistema i conflitti e **Riprendi merge tag**
+7. Scrivi le release notes
+8. **Avvia release**
+9. Log verde? Fatto. Altrimenti sistema i conflitti e **Riprendi merge tag**
 
 Tu decidi cosa esce. Io eseguo come esce.
 
@@ -148,6 +152,8 @@ Your last choices are remembered. Languages: English, Italiano, Español, Franç
 
 **Branches that receive the tag** — production already got it. You pick the others. For each: `pull` → `merge <tag> --no-ff` → `push`.
 
+**Release notes** — textarea. After a successful run it becomes the GitHub Release body (VS Code/Cursor GitHub login). Dry-run or a non-GitHub origin: I create nothing.
+
 **Log** — every step, the command, the result. Green good, yellow hmm, red we stopped.
 
 ### What happens when you hit Start
@@ -166,6 +172,7 @@ tag + push tags
 merge the tag into the other branches
 checkout production
 (optional) branch cleanup
+create the GitHub Release with the notes
 ```
 
 If something breaks, **I stop**. I don’t try anyway and cry later.
@@ -176,7 +183,7 @@ A merge can argue. I stop, show you the branch and files, you fix them by hand. 
 
 ### History
 
-Every deploy (real or dry-run, success or stop) is saved: tag, origin branches, destinations, date, result, full log. For the day someone asks whether `1.3.2` actually landed on staging.
+History is the list of **GitHub Releases**. If this machine ran the deploy with MasTurbo, the same card also shows branches, result and log. If the Release only exists on GitHub, you get tag, notes, date and link — nothing else.
 
 ### What I’m not
 
@@ -190,7 +197,8 @@ Not a CI/CD replacement. I don’t resolve conflicts for you. I won’t start on
 4. Confirm the start branch
 5. Tick the features to merge
 6. Tick the branches that should get the tag
-7. **Start release**
-8. Log green? Done. Otherwise fix conflicts and **Resume merge tag**
+7. Write the release notes
+8. **Start release**
+9. Log green? Done. Otherwise fix conflicts and **Resume merge tag**
 
 You decide what ships. I run how it ships.

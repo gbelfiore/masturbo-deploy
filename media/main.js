@@ -30,11 +30,7 @@ const pageRelease = document.getElementById("page-release");
 const pageHistory = document.getElementById("page-history");
 const historyList = document.getElementById("historyList");
 const historyEmpty = document.getElementById("historyEmpty");
-const historyDetail = document.getElementById("historyDetail");
-const historyDetailTitle = document.getElementById("historyDetailTitle");
-const historyDetailMeta = document.getElementById("historyDetailMeta");
-const historyMeta = document.getElementById("historyMeta");
-const historyLog = document.getElementById("historyLog");
+const releaseNotes = document.getElementById("releaseNotes");
 
 let running = false;
 let runningMode = "";
@@ -43,6 +39,7 @@ let locale = "en";
 let i18n = {};
 let lastRepoState = null;
 let lastHistory = [];
+let lastHistoryError = "";
 let selectedHistoryId = "";
 
 refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh", repoPath: repoSelect.value }));
@@ -52,6 +49,7 @@ repoSelect.addEventListener("change", () => {
 });
 sourceSelect.addEventListener("change", persistSelection);
 versionInput.addEventListener("input", () => updateHint(versionInput.value));
+releaseNotes.addEventListener("input", persistSelection);
 mergeSearch.addEventListener("input", () => filterChecks(mergeBox, mergeSearch.value, mergeEmpty));
 targetSearch.addEventListener("input", () => filterChecks(targetBox, targetSearch.value, targetEmpty));
 document.querySelectorAll("[data-tree]").forEach((btn) => {
@@ -65,7 +63,10 @@ langSelect.addEventListener("change", () => {
   vscode.postMessage({ type: "setLanguage", locale: langSelect.value });
 });
 navRelease.addEventListener("click", () => showPage("release"));
-navHistory.addEventListener("click", () => showPage("history"));
+navHistory.addEventListener("click", () => {
+  showPage("history");
+  vscode.postMessage({ type: "refreshHistory" });
+});
 [reuse, dryRun, deleteMerged, deleteRelease].forEach((box) => {
   box.addEventListener("change", persistHeaderTools);
   box.addEventListener("click", persistHeaderTools);
@@ -94,6 +95,7 @@ startBtn.addEventListener("click", () => {
     mergeBranches: checked(mergeBox),
     targetBranches: checked(targetBox),
     sourceBranch: sourceSelect.value,
+    releaseNotes: releaseNotes.value,
     reuseReleaseBranch: reuse.checked,
     dryRun: dryRun.checked,
     deleteMergedBranches: deleteMerged.checked,
@@ -120,6 +122,7 @@ resumeBtn.addEventListener("click", () => {
     repoPath: repoSelect.value,
     version,
     targetBranches,
+    releaseNotes: releaseNotes.value,
     dryRun: dryRun.checked,
   });
   setRunning(true, "resume");
@@ -142,6 +145,7 @@ window.addEventListener("message", (event) => {
   }
   if (data.type === "history") {
     lastHistory = data.records || [];
+    lastHistoryError = data.error || "";
     renderHistory();
     return;
   }
@@ -173,6 +177,7 @@ window.addEventListener("message", (event) => {
       mergeSelected.innerHTML = "";
       targetSelected.innerHTML = "";
       sourceSelect.innerHTML = "";
+      releaseNotes.value = "";
       fromVersion.textContent = "—";
       return;
     }
@@ -189,6 +194,7 @@ window.addEventListener("message", (event) => {
     fillChecks(targetBox, data.branches, data.savedTargets || defaultTargets(data.branches), targetSelected);
     filterChecks(mergeBox, "", mergeEmpty);
     filterChecks(targetBox, "", targetEmpty);
+    releaseNotes.value = data.savedNotes || "";
     return;
   }
   if (data.type === "log") {
@@ -496,6 +502,7 @@ function persistSelection() {
     mergeBranches: checked(mergeBox),
     targetBranches: checked(targetBox),
     sourceBranch: sourceSelect.value,
+    releaseNotes: releaseNotes.value,
   });
 }
 
@@ -509,61 +516,102 @@ function showPage(name) {
 
 function renderHistory() {
   const records = lastHistory || [];
+  if (lastHistoryError) {
+    historyEmpty.textContent = lastHistoryError;
+  } else {
+    historyEmpty.textContent = msg("historyEmpty");
+  }
   historyEmpty.classList.toggle("hidden", records.length > 0);
   historyList.innerHTML = "";
   for (const record of records) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = `history-item${record.id === selectedHistoryId ? " is-active" : ""}`;
+    const open = record.id === selectedHistoryId;
+    const item = document.createElement("div");
+    item.className = `history-item${open ? " is-active" : ""}`;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "history-item-toggle";
     const head = document.createElement("div");
     head.className = "history-item-head";
     const tag = document.createElement("strong");
     tag.textContent = record.tag || msg("na");
     const status = document.createElement("span");
-    status.className = `pill ${record.ok ? "" : "warn"}`;
-    status.textContent = record.dryRun ? msg("historyDry") : record.ok ? msg("historyOk") : msg("historyFail");
+    status.className = `pill${record.hasLocal && record.ok === false ? " warn" : ""}`;
+    status.textContent = record.hasLocal
+      ? record.dryRun
+        ? msg("historyDry")
+        : record.ok
+          ? msg("historyOk")
+          : msg("historyFail")
+      : msg("historyGithub");
     head.append(tag, status);
     const info = document.createElement("div");
     info.className = "history-item-info";
-    info.textContent = `${record.repoName} · ${formatWhen(record.at)} · ${record.kind === "resume" ? msg("historyKindResume") : msg("historyKindRelease")}`;
-    const origin = document.createElement("div");
-    origin.className = "history-item-branches";
-    origin.textContent = `${msg("historyOrigin")}: ${joinBranches(record.originBranches)}`;
-    const dest = document.createElement("div");
-    dest.className = "history-item-branches";
-    dest.textContent = `${msg("historyTarget")}: ${joinBranches(record.targetBranches)}`;
-    item.append(head, info, origin, dest);
-    item.addEventListener("click", () => {
-      selectedHistoryId = record.id;
+    info.textContent = record.hasLocal
+      ? `${record.repoName} · ${formatWhen(record.at)} · ${record.kind === "resume" ? msg("historyKindResume") : msg("historyKindRelease")}`
+      : `${record.repoName} · ${formatWhen(record.at)}`;
+    toggle.append(head, info);
+    toggle.addEventListener("click", () => {
+      selectedHistoryId = open ? "" : record.id;
       renderHistory();
-      showHistoryDetail(record);
     });
+    item.appendChild(toggle);
+    if (open) item.appendChild(historyDetail(record));
     historyList.appendChild(item);
   }
-  const selected = records.find((record) => record.id === selectedHistoryId);
-  if (selected) {
-    showHistoryDetail(selected);
-  } else {
-    historyDetail.classList.add("hidden");
-  }
 }
 
-function showHistoryDetail(record) {
-  historyDetail.classList.remove("hidden");
-  historyDetailTitle.textContent = `${msg("historyTag")} ${record.tag || msg("na")}`;
-  historyDetailMeta.textContent = `${record.repoName} · ${formatWhen(record.at)} · ${record.kind === "resume" ? msg("historyKindResume") : msg("historyKindRelease")}`;
-  historyMeta.innerHTML = "";
-  addMeta(msg("historyStatus"), record.dryRun ? msg("historyDry") : record.ok ? msg("historyOk") : msg("historyFail"), !record.ok);
-  addMeta(msg("historyRepo"), record.repoName);
-  addMeta(msg("historyOrigin"), joinBranches(record.originBranches));
-  addMeta(msg("historyTarget"), joinBranches(record.targetBranches));
-  historyLog.innerHTML = "";
-  for (const line of record.logs || []) {
-    historyLog.appendChild(logItem(line.level, line.message));
+function historyDetail(record) {
+  const detail = document.createElement("div");
+  detail.className = "history-item-detail";
+  const meta = document.createElement("div");
+  meta.className = "history-meta";
+  meta.appendChild(metaRow(msg("historyRepo"), record.repoName));
+  meta.appendChild(metaRow(msg("historyWhen"), formatWhen(record.at)));
+  if (record.hasLocal) {
+    meta.appendChild(
+      metaRow(
+        msg("historyStatus"),
+        record.dryRun ? msg("historyDry") : record.ok ? msg("historyOk") : msg("historyFail"),
+        record.ok === false
+      )
+    );
+    meta.appendChild(metaRow(msg("historyOrigin"), joinBranches(record.originBranches)));
+    meta.appendChild(metaRow(msg("historyTarget"), joinBranches(record.targetBranches)));
   }
+  detail.appendChild(meta);
+  const notes = document.createElement("div");
+  renderNotesPreview(notes, record.githubBody || "", {
+    notes: msg("historyNotes"),
+    empty: msg("historyNoNotes"),
+    markdown: msg("historyKindMarkdown"),
+    html: msg("historyKindHtml"),
+    text: msg("historyKindText"),
+    json: msg("historyKindJson"),
+  });
+  detail.appendChild(notes);
+  if (record.githubUrl) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "secondary history-link";
+    link.textContent = msg("historyOpenGithub");
+    link.addEventListener("click", (event) => {
+      event.stopPropagation();
+      vscode.postMessage({ type: "openUrl", url: record.githubUrl });
+    });
+    detail.appendChild(link);
+  }
+  if (record.hasLocal && record.logs && record.logs.length) {
+    const log = document.createElement("div");
+    log.className = "log-view";
+    for (const line of record.logs) {
+      log.appendChild(logItem(line.level, line.message));
+    }
+    detail.appendChild(log);
+  }
+  return detail;
 }
 
-function addMeta(label, value, warn) {
+function metaRow(label, value, warn) {
   const row = document.createElement("div");
   row.className = "history-meta-row";
   const name = document.createElement("span");
@@ -572,7 +620,7 @@ function addMeta(label, value, warn) {
   val.className = warn ? "is-warn" : "";
   val.textContent = value;
   row.append(name, val);
-  historyMeta.appendChild(row);
+  return row;
 }
 
 function joinBranches(values) {

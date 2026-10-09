@@ -4,6 +4,7 @@ import { findWorkspaceRepos } from "./repos";
 import { ConflictInfo, runRelease, runResumeTagMerge } from "./release";
 import { latestVersion, readPackageVersion } from "./version";
 import { defaultSource, defaultTargets, DeployRecord, HeaderTools, keepExisting, loadHeaderTools, loadHeaderToolsAsync, loadHistory, loadSelection, saveDeploy, saveHeaderTools, saveSelection } from "./persist";
+import { createGithubRelease, getOriginGithubRepo, listGithubReleases, mergeGithubHistory } from "./github";
 import * as path from "path";
 import { LOCALES, Locale, isLocale, loadLocale, MESSAGES, saveLocale, t } from "./i18n";
 
@@ -13,12 +14,15 @@ type WebviewMessage =
   | { type: "selectRepo"; path: string }
   | { type: "setLanguage"; locale: string }
   | { type: "saveHeaderTools"; tools: HeaderTools }
+  | { type: "refreshHistory" }
+  | { type: "openUrl"; url: string }
   | {
       type: "saveSelection";
       repoPath: string;
       mergeBranches: string[];
       targetBranches: string[];
       sourceBranch: string;
+      releaseNotes?: string;
     }
   | {
       type: "start";
@@ -27,6 +31,7 @@ type WebviewMessage =
       mergeBranches: string[];
       targetBranches: string[];
       sourceBranch: string;
+      releaseNotes?: string;
       reuseReleaseBranch: boolean;
       dryRun: boolean;
       deleteMergedBranches: boolean;
@@ -37,6 +42,7 @@ type WebviewMessage =
       repoPath: string;
       version: string;
       targetBranches: string[];
+      releaseNotes?: string;
       dryRun: boolean;
     };
 
@@ -109,6 +115,14 @@ export class ReleasePanel {
       await this.sendI18n();
       return;
     }
+    if (message.type === "refreshHistory") {
+      await this.sendHistory();
+      return;
+    }
+    if (message.type === "openUrl" && message.url) {
+      await vscode.env.openExternal(vscode.Uri.parse(message.url));
+      return;
+    }
     if (message.type === "selectRepo") {
       this.selectedRepo = message.path;
       await this.sendHistory();
@@ -120,6 +134,7 @@ export class ReleasePanel {
         mergeBranches: message.mergeBranches,
         targetBranches: message.targetBranches,
         sourceBranch: message.sourceBranch,
+        releaseNotes: message.releaseNotes,
       });
       return;
     }
@@ -134,6 +149,7 @@ export class ReleasePanel {
         mergeBranches: message.mergeBranches,
         targetBranches: message.targetBranches,
         sourceBranch: message.sourceBranch,
+        releaseNotes: message.releaseNotes,
       });
       await this.start(message);
       return;
@@ -146,6 +162,7 @@ export class ReleasePanel {
         mergeBranches: saved?.mergeBranches ?? [],
         targetBranches: message.targetBranches,
         sourceBranch: saved?.sourceBranch,
+        releaseNotes: message.releaseNotes ?? saved?.releaseNotes,
       });
       await this.resumeTag(message);
     }
@@ -194,6 +211,7 @@ export class ReleasePanel {
         savedMerge: keepExisting(saved?.mergeBranches, branches),
         savedTargets: saved ? keepExisting(saved.targetBranches, branches) : defaultTargets(branches),
         savedSource: defaultSource(branches, saved?.sourceBranch),
+        savedNotes: saved?.releaseNotes || "",
       });
     } catch (error) {
       await this.panel.webview.postMessage({
@@ -221,7 +239,10 @@ export class ReleasePanel {
         void this.panel.webview.postMessage({ type: "log", level, message: text });
       }
     );
-    await this.storeDeploy("release", message.repoPath, message.version, message.mergeBranches, message.targetBranches, message.dryRun, result);
+    const githubUrl = result.ok
+      ? await this.publishGithubRelease(message.repoPath, result.tag, message.releaseNotes || "", message.dryRun)
+      : undefined;
+    await this.storeDeploy("release", message.repoPath, message.version, message.mergeBranches, message.targetBranches, message.dryRun, result, githubUrl);
     await this.panel.webview.postMessage({ type: "done", ok: result.ok });
     const locale = loadLocale(this.context);
     if (result.conflict) {
@@ -250,7 +271,10 @@ export class ReleasePanel {
         void this.panel.webview.postMessage({ type: "log", level, message: text });
       }
     );
-    await this.storeDeploy("resume", message.repoPath, message.version, [], message.targetBranches, message.dryRun, result);
+    const githubUrl = result.ok
+      ? await this.publishGithubRelease(message.repoPath, result.tag, message.releaseNotes || "", message.dryRun)
+      : undefined;
+    await this.storeDeploy("resume", message.repoPath, message.version, [], message.targetBranches, message.dryRun, result, githubUrl);
     await this.panel.webview.postMessage({ type: "done", ok: result.ok });
     const locale = loadLocale(this.context);
     if (result.conflict) {
@@ -271,7 +295,8 @@ export class ReleasePanel {
     originBranches: string[],
     targetBranches: string[],
     dryRun: boolean,
-    result: { ok: boolean; tag: string; logs: { level: "info" | "ok" | "warn" | "error"; message: string }[]; conflict?: ConflictInfo }
+    result: { ok: boolean; tag: string; logs: { level: "info" | "ok" | "warn" | "error"; message: string }[]; conflict?: ConflictInfo },
+    githubUrl?: string
   ): Promise<void> {
     await saveDeploy(this.context, {
       id: `${Date.now()}-${version}`,
@@ -287,15 +312,80 @@ export class ReleasePanel {
       logs: result.logs,
       conflictBranch: result.conflict?.branch,
       conflictFiles: result.conflict?.files,
+      githubUrl,
     });
     await this.sendHistory();
   }
 
+  private async publishGithubRelease(
+    repoPath: string,
+    tag: string,
+    notes: string,
+    dryRun: boolean
+  ): Promise<string | undefined> {
+    const locale = loadLocale(this.context);
+    const log = (level: "info" | "ok" | "warn" | "error", message: string) => {
+      void this.panel.webview.postMessage({ type: "log", level, message });
+    };
+    if (dryRun) {
+      log("info", t(locale, "dryRunGithub", { tag }));
+      return undefined;
+    }
+    const repo = await getOriginGithubRepo(repoPath);
+    if (!repo) {
+      log("info", t(locale, "githubReleaseSkipped"));
+      return undefined;
+    }
+    log("info", t(locale, "logCreateGithubRelease", { tag }));
+    try {
+      const created = await createGithubRelease(repo, tag, notes);
+      if (created.existed) {
+        log("info", t(locale, "githubReleaseExists", { tag }));
+      } else {
+        log("ok", t(locale, "githubReleaseCreated", { tag }));
+      }
+      return created.htmlUrl;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === "github auth missing") {
+        log("warn", t(locale, "githubAuthFailed"));
+      } else {
+        log("warn", t(locale, "githubReleaseFailed", { error: message }));
+      }
+      return undefined;
+    }
+  }
+
   private async sendHistory(): Promise<void> {
-    await this.panel.webview.postMessage({
-      type: "history",
-      records: loadHistory(this.context, this.selectedRepo),
-    });
+    const locale = loadLocale(this.context);
+    const repoPath = this.selectedRepo;
+    if (!repoPath) {
+      await this.panel.webview.postMessage({ type: "history", records: [], error: t(locale, "noGitRepo") });
+      return;
+    }
+    const githubRepo = await getOriginGithubRepo(repoPath);
+    if (!githubRepo) {
+      await this.panel.webview.postMessage({
+        type: "history",
+        records: [],
+        error: t(locale, "historyNotGithub"),
+      });
+      return;
+    }
+    try {
+      const releases = await listGithubReleases(githubRepo);
+      await this.panel.webview.postMessage({
+        type: "history",
+        records: mergeGithubHistory(releases, loadHistory(this.context, repoPath), path.basename(repoPath)),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.panel.webview.postMessage({
+        type: "history",
+        records: [],
+        error: t(locale, "historyGithubError", { error: message }),
+      });
+    }
   }
 
   private async sendI18n(): Promise<void> {
@@ -317,6 +407,7 @@ export class ReleasePanel {
   private html(): string {
     const webview = this.panel.webview;
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "main.js"));
+    const notesUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "notes-preview.js"));
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "main.css"));
     const iconUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "icon.png"));
     const nonce = String(Date.now());
@@ -329,7 +420,7 @@ export class ReleasePanel {
 <html lang="${locale}">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource} https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'nonce-${nonce}';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; style-src ${webview.cspSource} https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'nonce-${nonce}';" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="${styleUri}" rel="stylesheet" />
   <title>MasTurbo Deploy</title>
@@ -453,9 +544,19 @@ export class ReleasePanel {
             <div id="targetBranches" class="checks"></div>
             <p id="targetEmpty" class="empty hidden" data-i18n="noBranchMatch">No branch matches the search.</p>
           </section>
-          <section id="step-log" class="block card">
+          <section id="step-notes" class="block card">
             <div class="block-head">
               <span class="step">7</span>
+              <div>
+                <h2 data-i18n="notesTitle">Release notes</h2>
+                <p data-i18n="notesHelp">This text becomes the GitHub Release body after a successful run.</p>
+              </div>
+            </div>
+            <textarea id="releaseNotes" class="notes-input" rows="6" data-i18n-placeholder="notesPlaceholder" placeholder="What shipped in this version..."></textarea>
+          </section>
+          <section id="step-log" class="block card">
+            <div class="block-head">
+              <span class="step">8</span>
               <div>
                 <h2 data-i18n="log">Log</h2>
                 <p data-i18n="logHelp">Git command output.</p>
@@ -475,26 +576,16 @@ export class ReleasePanel {
               <span class="step">1</span>
               <div>
                 <h2 data-i18n="historyTitle">Deploy history</h2>
-                <p data-i18n="historyHelp">Saved deploys with tag, origin branches, destination branches and log.</p>
+                <p data-i18n="historyHelp">GitHub releases, with MasTurbo details when this machine ran the deploy.</p>
               </div>
             </div>
             <p id="historyEmpty" class="empty" data-i18n="historyEmpty">No deploys yet.</p>
             <div id="historyList" class="history-list"></div>
           </section>
-          <section id="historyDetail" class="block card hidden">
-            <div class="block-head">
-              <span class="step">2</span>
-              <div>
-                <h2 id="historyDetailTitle">—</h2>
-                <p id="historyDetailMeta"></p>
-              </div>
-            </div>
-            <div id="historyMeta" class="history-meta"></div>
-            <div id="historyLog" class="log-view"></div>
-          </section>
         </div>
       </div>
   </div>
+  <script nonce="${nonce}" src="${notesUri}"></script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
