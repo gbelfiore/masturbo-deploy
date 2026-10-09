@@ -2,9 +2,13 @@
   "name": "masturbodeploy",
   "displayName": "MasTurbo Deploy",
   "description": "Creates the release branch, bumps the version, and handles merge and deploy for workspace repositories",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "publisher": "MasTurboDeploy",
   "author": "Giovanni Belfiore",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gbelfiore/masturbo-deploy.git"
+  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
@@ -62,6 +66,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "dev": "code --extensionDevelopmentPath=${INIT_CWD:-.}",
+    "package": "mkdir -p releasevsix && npx @vscode/vsce package --allow-star-activation --out releasevsix/masturbodeploy-$npm_package_version.vsix",
     "install-local": "npm run compile && rm -rf \"$HOME/.cursor/extensions/giovanni-belfiore.masturbodeploy-0.1.0\" \"$HOME/.cursor/extensions/local.release-deploy-0.1.0\" && mkdir -p \"$HOME/.vscode/extensions/giovanni-belfiore.masturbodeploy-0.1.0\" && cp package.json README.md \"$HOME/.vscode/extensions/giovanni-belfiore.masturbodeploy-0.1.0/\" && rm -rf \"$HOME/.vscode/extensions/giovanni-belfiore.masturbodeploy-0.1.0/out\" \"$HOME/.vscode/extensions/giovanni-belfiore.masturbodeploy-0.1.0/media\" && cp -R out media \"$HOME/.vscode/extensions/giovanni-belfiore.masturbodeploy-0.1.0/\""
   },
   "devDependencies": {

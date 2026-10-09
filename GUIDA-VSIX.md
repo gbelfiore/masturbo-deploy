@@ -20,14 +20,13 @@ Deve uscire qualcosa tipo `v22.x.x`.
 ## 3. Compila e genera il `.vsix`
 
 ```bash
-npm run compile
-npx @vscode/vsce package --allow-missing-repository --allow-star-activation
+npm run package
 ```
 
-Il file finisce qui:
+Il file finisce in `releasevsix/` (cartella gitignore):
 
 ```text
-masturbodeploy-1.0.0.vsix
+releasevsix/masturbodeploy-1.0.2.vsix
 ```
 
 Il numero nel nome è la `version` di `package.json`. Se la alzi, il file si chiama di conseguenza.
@@ -35,7 +34,7 @@ Il numero nel nome è la `version` di `package.json`. Se la alzi, il file si chi
 ## 4. Installalo in locale su VS Code
 
 ```bash
-"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension ./masturbodeploy-1.0.0.vsix --force
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension ./releasevsix/masturbodeploy-1.0.2.vsix --force
 ```
 
 Poi in VS Code: `Developer: Reload Window`.
