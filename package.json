@@ -2,8 +2,8 @@
   "name": "masturbodeploy",
   "displayName": "MasTurbo Deploy",
   "description": "Creates the release branch, bumps the version, and handles merge and deploy for workspace repositories",
-  "version": "1.0.0",
-  "publisher": "giovanni-belfiore",
+  "version": "1.0.1",
+  "publisher": "MasTurboDeploy",
   "author": "Giovanni Belfiore",
   "icon": "media/icon.png",
   "engines": {
