@@ -34,11 +34,27 @@ Tutto da un pannello, con log in diretta. Senza copiare comandi da uno Slack di 
 - icona in **Activity Bar** → lista dei repository → click
 - Command Palette → **MasTurbo Deploy: Open wizard**
 
-Le tue scelte restano salvate. Lingue: Italiano, English, Español, Français, Deutsch.
+Lingue: Italiano, English, Español, Français, Deutsch.
+
+### Cartella `.mtdeploy`
+
+All’apertura di un repo, se manca, creo la cartella nascosta e la metto in `.gitignore`:
+
+```text
+.mtdeploy/
+  .mtconfig
+  .mthistory
+```
+
+Non committarla. È memoria locale del clone. Se trovi ancora i vecchi file in root (`.mtdeploy` o `.mthistory`), li sposto io dentro.
+
+**`.mtconfig`** — da dove parto, chi riceve il tag, e i quattro interruttori (riusa release, dry-run, elimina mergiati, elimina release). Li leggi e li cambi dal wizard: io riscrivo questo file. Se non esiste, lo creo con `develop`, i target `develop` / `unstable` / `staging` / `production` e dry-run acceso.
+
+**`.mthistory`** — cache locale dello storico. Le GitHub Release restano la fonte condivisa (note, autore, metadati MasTurbo). Qui tengo log, branch e i run che GitHub non vede (dry-run e fallimenti, massimo 80). All’apertura scarico i tag mancanti da GitHub e li unisco senza sovrascrivere i dettagli più ricchi.
 
 ### Funzionalità
 
-**Opzioni** (le ricordo io)
+**Opzioni** (vivono in `.mtconfig`)
 
 | Interruttore | Cosa fa |
 | --- | --- |
@@ -49,7 +65,7 @@ Le tue scelte restano salvate. Lingue: Italiano, English, Español, Français, D
 
 **Repository** — workspace con più git? Li elenco, tu scegli. Ti dico branch corrente, base, produzione e se il working tree è sporco. Se è sporco mi fermo: prima commit o stash.
 
-**Versione** — a sinistra quella attuale, a destra quella nuova. Tu scrivi `1.4.0`, io creo `release/1.4.0`, aggiorno `package.json` (e `package-lock.json` se c’è), uso `1.4.0` come tag e committo `chore: bump version to 1.4.0`.
+**Versione** — a sinistra quella attuale, a destra quella nuova. Tu scrivi `1.4.0`, io creo `release/1.4.0`, aggiorno `package.json` (e `package-lock.json` se c’è), uso `1.4.0` come tag e committo `chore: bump version to 1.4.0`. Se `package.json` non c’è, salto il bump e vado avanti.
 
 **Branch di partenza** — da dove nasce la release. Se c’è `develop`, lo preseleziono.
 
@@ -57,7 +73,7 @@ Le tue scelte restano salvate. Lingue: Italiano, English, Español, Français, D
 
 **Branch che ricevono il tag** — produzione ce l’ha già. Qui scegli gli altri. Per ciascuno: `pull` → `merge <tag> --no-ff` → `push`.
 
-**Release notes** — textarea. Dopo una run riuscita diventa il body della GitHub Release (login GitHub di VS Code/Cursor). In dry-run o se origin non è GitHub, non creo niente.
+**Release notes** — textarea, oppure **Genera note**: prima GitHub, poi il `git log`, e se Copilot è in casa le riscrive nella lingua del wizard. Dopo una run riuscita diventano il body della GitHub Release (login GitHub di VS Code/Cursor). In dry-run o se origin non è GitHub, non creo niente.
 
 **Log** — ogni passo, il comando, l’esito. Verde ok, giallo ehm, rosso ci siamo fermati.
 
@@ -88,7 +104,7 @@ Un merge può litigare. Io interrompo, ti mostro branch e file, tu risolvi a man
 
 ### Storico
 
-Lo storico è la lista delle **GitHub Release**. Se questa macchina ha fatto il deploy con MasTurbo, sulla stessa scheda trovi anche branch, esito e log. Se la Release arriva solo da GitHub, vedi solo tag, note, data e link.
+Lo storico è la lista delle **GitHub Release**, con l’autore. Se questa macchina (o un altro clone, dopo il sync) ha fatto il deploy con MasTurbo, sulla stessa scheda trovi anche branch, esito e log, copiati da `.mthistory`. Se la Release arriva solo da GitHub, vedi tag, note, data, autore e link.
 
 ### Cosa non sono
 
@@ -129,11 +145,27 @@ One panel. Live log. No more copying commands from a three-month-old Slack threa
 - **Activity Bar** icon → repository list → click
 - Command Palette → **MasTurbo Deploy: Open wizard**
 
-Your last choices are remembered. Languages: English, Italiano, Español, Français, Deutsch.
+Languages: English, Italiano, Español, Français, Deutsch.
+
+### The `.mtdeploy` folder
+
+When you open a repo, if it’s missing I create the hidden folder and add it to `.gitignore`:
+
+```text
+.mtdeploy/
+  .mtconfig
+  .mthistory
+```
+
+Don’t commit it. It’s local memory for this clone. Old root files (`.mtdeploy` or `.mthistory`) get moved inside.
+
+**`.mtconfig`** — start branch, tag targets, and the four switches (reuse release, dry-run, delete merged, delete release). Change them in the wizard, I rewrite this file. If it’s missing I create it with `develop`, targets `develop` / `unstable` / `staging` / `production`, and dry-run on.
+
+**`.mthistory`** — local history cache. GitHub Releases stay the shared source (notes, author, MasTurbo metadata). I keep logs, branches, and runs GitHub never sees (dry-run and failures, cap 80). On open I pull missing tags from GitHub and merge them without overwriting richer local extras.
 
 ### Features
 
-**Options** (I remember them)
+**Options** (they live in `.mtconfig`)
 
 | Switch | What it does |
 | --- | --- |
@@ -144,7 +176,7 @@ Your last choices are remembered. Languages: English, Italiano, Español, Franç
 
 **Repository** — several git repos? I list them, you pick. I show current branch, base, production, and whether the working tree is dirty. Dirty? I stop. Commit or stash first.
 
-**Version** — current on the left, new on the right. You type `1.4.0`, I create `release/1.4.0`, update `package.json` (and `package-lock.json` if it exists), use `1.4.0` as the tag, and commit `chore: bump version to 1.4.0`.
+**Version** — current on the left, new on the right. You type `1.4.0`, I create `release/1.4.0`, update `package.json` (and `package-lock.json` if it exists), use `1.4.0` as the tag, and commit `chore: bump version to 1.4.0`. No `package.json`? I skip the bump and keep going.
 
 **Start branch** — where the release is born. If `develop` exists, I preselect it.
 
@@ -152,7 +184,7 @@ Your last choices are remembered. Languages: English, Italiano, Español, Franç
 
 **Branches that receive the tag** — production already got it. You pick the others. For each: `pull` → `merge <tag> --no-ff` → `push`.
 
-**Release notes** — textarea. After a successful run it becomes the GitHub Release body (VS Code/Cursor GitHub login). Dry-run or a non-GitHub origin: I create nothing.
+**Release notes** — textarea, or **Generate notes**: GitHub first, then `git log`, and if Copilot is around I rewrite them in the wizard language. After a successful run they become the GitHub Release body (VS Code/Cursor GitHub login). Dry-run or a non-GitHub origin: I create nothing.
 
 **Log** — every step, the command, the result. Green good, yellow hmm, red we stopped.
 
@@ -183,7 +215,7 @@ A merge can argue. I stop, show you the branch and files, you fix them by hand. 
 
 ### History
 
-History is the list of **GitHub Releases**. If this machine ran the deploy with MasTurbo, the same card also shows branches, result and log. If the Release only exists on GitHub, you get tag, notes, date and link — nothing else.
+History is the list of **GitHub Releases**, plus the author. If this machine (or another clone, after sync) ran the deploy with MasTurbo, the same card also shows branches, result and log from `.mthistory`. If the Release only exists on GitHub, you get tag, notes, date, author and link.
 
 ### What I’m not
 
