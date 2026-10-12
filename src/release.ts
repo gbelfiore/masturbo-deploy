@@ -10,6 +10,7 @@ export interface ReleaseInput {
   mergeBranches: string[];
   targetBranches: string[];
   sourceBranch: string;
+  tagBranch: string;
   reuseReleaseBranch: boolean;
   dryRun: boolean;
   deleteMergedBranches: boolean;
@@ -75,7 +76,7 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
     await step(input.dryRun, log, locale, git, t(locale, "logFetch"), "git fetch --all --prune", () => git.fetch());
 
     const source = input.sourceBranch.trim() || (await git.sourceBranch());
-    const production = await git.productionBranch();
+    const production = input.tagBranch.trim() || (await git.productionBranch());
     log("info", t(locale, "sourceBranch", { name: source }));
     log("info", t(locale, "productionBranch", { name: production }));
 

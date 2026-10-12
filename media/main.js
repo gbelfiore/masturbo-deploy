@@ -2,6 +2,7 @@ const vscode = acquireVsCodeApi();
 
 const repoSelect = document.getElementById("repo");
 const sourceSelect = document.getElementById("sourceBranch");
+const tagSelect = document.getElementById("tagBranch");
 const repoMeta = document.getElementById("repoMeta");
 const fromVersion = document.getElementById("fromVersion");
 const versionInput = document.getElementById("version");
@@ -91,6 +92,10 @@ startBtn.addEventListener("click", () => {
     appendLog("error", msg("enterSource"));
     return;
   }
+  if (!tagSelect.value) {
+    appendLog("error", msg("enterTag"));
+    return;
+  }
   clearLog();
   vscode.postMessage({
     type: "start",
@@ -99,6 +104,7 @@ startBtn.addEventListener("click", () => {
     mergeBranches: checked(mergeBox),
     targetBranches: checked(targetBox),
     sourceBranch: sourceSelect.value,
+    tagBranch: tagSelect.value,
     releaseNotes: releaseNotes.value,
     reuseReleaseBranch: reuse.checked,
     dryRun: dryRun.checked,
@@ -203,6 +209,7 @@ window.addEventListener("message", (event) => {
       mergeSelected.innerHTML = "";
       targetSelected.innerHTML = "";
       sourceSelect.innerHTML = "";
+      tagSelect.innerHTML = "";
       releaseNotes.value = "";
       fromVersion.textContent = "—";
       updateActionButtons();
@@ -217,6 +224,7 @@ window.addEventListener("message", (event) => {
     mergeSearch.value = "";
     targetSearch.value = "";
     fillSourceSelect(data.branches, data.savedSource || defaultSource(data.branches));
+    fillTagSelect(data.branches, data.savedTag || defaultTag(data.branches));
     fillChecks(mergeBox, data.branches, [], mergeSelected);
     fillChecks(targetBox, data.branches, data.savedTargets || defaultTargets(data.branches), targetSelected);
     setCollapsed(mergeBox, true);
@@ -502,16 +510,30 @@ function defaultSource(branches) {
   return branches[0] || "";
 }
 
-function fillSourceSelect(branches, selected) {
-  sourceSelect.innerHTML = "";
-  const pick = selected && branches.includes(selected) ? selected : defaultSource(branches);
+function defaultTag(branches) {
+  if (branches.includes("main")) return "main";
+  if (branches.includes("master")) return "master";
+  return branches[0] || "";
+}
+
+function fillBranchSelect(select, branches, selected, fallback) {
+  select.innerHTML = "";
+  const pick = selected && branches.includes(selected) ? selected : fallback(branches);
   for (const branch of branches) {
     const option = document.createElement("option");
     option.value = branch;
     option.textContent = branch;
     if (branch === pick) option.selected = true;
-    sourceSelect.appendChild(option);
+    select.appendChild(option);
   }
+}
+
+function fillSourceSelect(branches, selected) {
+  fillBranchSelect(sourceSelect, branches, selected, defaultSource);
+}
+
+function fillTagSelect(branches, selected) {
+  fillBranchSelect(tagSelect, branches, selected, defaultTag);
 }
 
 function currentHeaderTools() {

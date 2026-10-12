@@ -23,6 +23,7 @@ export const DEFAULT_TARGET_BRANCHES = ["develop", "unstable", "staging", "produ
 
 export interface MtDeployFile {
   sourceBranch?: string;
+  tagBranch?: string;
   targetBranches?: string[];
   reuseRelease?: boolean;
   dryRun?: boolean;
@@ -45,6 +46,7 @@ export function mtHistoryPath(repoPath: string): string {
 export function defaultMtConfig(): MtDeployFile {
   return {
     sourceBranch: "develop",
+    tagBranch: "main",
     targetBranches: [...DEFAULT_TARGET_BRANCHES],
     ...DEFAULT_HEADER_TOOLS,
   };
@@ -60,7 +62,7 @@ export function ensureMtDeploy(repoPath: string): MtDeployFile {
   ensureFolderIgnored(repoPath);
   const existing = readMtConfig(repoPath);
   const config = normalizeConfig(existing || legacy || defaultMtConfig());
-  if (!existing) {
+  if (!existing || !existing.tagBranch) {
     writeMtConfig(repoPath, config);
   }
   if (!fs.existsSync(mtHistoryPath(repoPath))) {
@@ -112,6 +114,7 @@ function normalizeConfig(raw: MtDeployFile): MtDeployFile {
     : [...DEFAULT_TARGET_BRANCHES];
   return {
     sourceBranch: typeof raw.sourceBranch === "string" && raw.sourceBranch.trim() ? raw.sourceBranch.trim() : defaults.sourceBranch,
+    tagBranch: typeof raw.tagBranch === "string" && raw.tagBranch.trim() ? raw.tagBranch.trim() : defaults.tagBranch,
     targetBranches: targetBranches.length ? targetBranches : [...DEFAULT_TARGET_BRANCHES],
     reuseRelease: raw.reuseRelease ?? defaults.reuseRelease,
     dryRun: raw.dryRun ?? defaults.dryRun,
@@ -127,11 +130,13 @@ function parseConfigFile(filePath: string): MtDeployFile | undefined {
     }
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
     const sourceBranch = typeof parsed.sourceBranch === "string" ? parsed.sourceBranch.trim() : undefined;
+    const tagBranch = typeof parsed.tagBranch === "string" ? parsed.tagBranch.trim() : undefined;
     const targetBranches = Array.isArray(parsed.targetBranches)
       ? parsed.targetBranches.map((item) => String(item).trim()).filter(Boolean)
       : undefined;
     return {
       sourceBranch,
+      tagBranch,
       targetBranches,
       reuseRelease: typeof parsed.reuseRelease === "boolean" ? parsed.reuseRelease : undefined,
       dryRun: typeof parsed.dryRun === "boolean" ? parsed.dryRun : undefined,

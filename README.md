@@ -48,7 +48,7 @@ All’apertura di un repo, se manca, creo la cartella nascosta e la metto in `.g
 
 Non committarla. È memoria locale del clone. Se trovi ancora i vecchi file in root (`.mtdeploy` o `.mthistory`), li sposto io dentro.
 
-**`.mtconfig`** — da dove parto, chi riceve il tag, e i quattro interruttori (riusa release, dry-run, elimina mergiati, elimina release). Li leggi e li cambi dal wizard: io riscrivo questo file. Se non esiste, lo creo con `develop`, i target `develop` / `unstable` / `staging` / `production` e dry-run acceso.
+**`.mtconfig`** — da dove parto (`sourceBranch`), su quale branch nasce il tag (`tagBranch`, default `main`), chi riceve il tag, e i quattro interruttori (riusa release, dry-run, elimina mergiati, elimina release). Li leggi e li cambi dal wizard: io riscrivo questo file. Se non esiste, lo creo con `develop`, tag su `main`, i target `develop` / `unstable` / `staging` / `production` e dry-run acceso.
 
 **`.mthistory`** — cache locale dello storico. Le GitHub Release restano la fonte condivisa (note, autore, metadati MasTurbo). Qui tengo log, branch e i run che GitHub non vede (dry-run e fallimenti, massimo 80). All’apertura scarico i tag mancanti da GitHub e li unisco senza sovrascrivere i dettagli più ricchi.
 
@@ -68,6 +68,8 @@ Non committarla. È memoria locale del clone. Se trovi ancora i vecchi file in r
 **Versione** — a sinistra quella attuale, a destra quella nuova. Tu scrivi `1.4.0`, io creo `release/1.4.0`, aggiorno `package.json` (e `package-lock.json` se c’è), uso `1.4.0` come tag e committo `chore: bump version to 1.4.0`. Se `package.json` non c’è, salto il bump e vado avanti.
 
 **Branch di partenza** — da dove nasce la release. Se c’è `develop`, lo preseleziono.
+
+**Branch di partenza del tag** — dove creo il tag dopo il merge della release. Default `main` (o `master` se `main` non c’è). Si configura con `tagBranch` in `.mtconfig`.
 
 **Merge sulla release** — quali feature entrano, oltre alla base. Albero, ricerca, badge. Merge `--no-ff`, storia leggibile.
 
@@ -116,11 +118,12 @@ Non sostituisco CI/CD. Non risolvo i conflitti al posto tuo. Non parto con il wo
 2. La prima volta accendi **Dry-run**
 3. Scegli repo e nuova versione
 4. Conferma il branch di partenza
-5. Spunta le feature da mergiare
-6. Spunta i branch che devono prendere il tag
-7. Scrivi le release notes
-8. **Avvia release**
-9. Log verde? Fatto. Altrimenti sistema i conflitti e **Riprendi merge tag**
+5. Conferma il branch di partenza del tag
+6. Spunta le feature da mergiare
+7. Spunta i branch che devono prendere il tag
+8. Scrivi le release notes
+9. **Avvia release**
+10. Log verde? Fatto. Altrimenti sistema i conflitti e **Riprendi merge tag**
 
 Tu decidi cosa esce. Io eseguo come esce.
 
@@ -159,7 +162,7 @@ When you open a repo, if it’s missing I create the hidden folder and add it to
 
 Don’t commit it. It’s local memory for this clone. Old root files (`.mtdeploy` or `.mthistory`) get moved inside.
 
-**`.mtconfig`** — start branch, tag targets, and the four switches (reuse release, dry-run, delete merged, delete release). Change them in the wizard, I rewrite this file. If it’s missing I create it with `develop`, targets `develop` / `unstable` / `staging` / `production`, and dry-run on.
+**`.mtconfig`** — start branch (`sourceBranch`), where the tag is born (`tagBranch`, default `main`), tag targets, and the four switches (reuse release, dry-run, delete merged, delete release). Change them in the wizard, I rewrite this file. If it’s missing I create it with `develop`, tag on `main`, targets `develop` / `unstable` / `staging` / `production`, and dry-run on.
 
 **`.mthistory`** — local history cache. GitHub Releases stay the shared source (notes, author, MasTurbo metadata). I keep logs, branches, and runs GitHub never sees (dry-run and failures, cap 80). On open I pull missing tags from GitHub and merge them without overwriting richer local extras.
 
@@ -179,6 +182,8 @@ Don’t commit it. It’s local memory for this clone. Old root files (`.mtdeplo
 **Version** — current on the left, new on the right. You type `1.4.0`, I create `release/1.4.0`, update `package.json` (and `package-lock.json` if it exists), use `1.4.0` as the tag, and commit `chore: bump version to 1.4.0`. No `package.json`? I skip the bump and keep going.
 
 **Start branch** — where the release is born. If `develop` exists, I preselect it.
+
+**Tag start branch** — where I create the tag after merging the release. Default `main` (or `master` if `main` is missing). Set it with `tagBranch` in `.mtconfig`.
 
 **Merge into the release** — which features come in, on top of the base. Tree, search, badges. `--no-ff` merges, readable history.
 
@@ -227,10 +232,11 @@ Not a CI/CD replacement. I don’t resolve conflicts for you. I won’t start on
 2. First time, turn on **Dry-run**
 3. Pick the repo and the new version
 4. Confirm the start branch
-5. Tick the features to merge
-6. Tick the branches that should get the tag
-7. Write the release notes
-8. **Start release**
-9. Log green? Done. Otherwise fix conflicts and **Resume merge tag**
+5. Confirm the tag start branch
+6. Tick the features to merge
+7. Tick the branches that should get the tag
+8. Write the release notes
+9. **Start release**
+10. Log green? Done. Otherwise fix conflicts and **Resume merge tag**
 
 You decide what ships. I run how it ships.

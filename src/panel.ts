@@ -3,7 +3,7 @@ import { GitRepo } from "./git";
 import { findWorkspaceRepos } from "./repos";
 import { ConflictInfo, runRelease, runResumeTagMerge } from "./release";
 import { latestVersion, readPackageVersion } from "./version";
-import { defaultSource, defaultTargets, DeployRecord, HeaderTools, keepExisting, loadHeaderTools, loadHeaderToolsAsync, loadHistory, loadSelection, saveDeploy, saveHeaderTools, saveSelection } from "./persist";
+import { defaultSource, defaultTagBranch, defaultTargets, DeployRecord, HeaderTools, keepExisting, loadHeaderTools, loadHeaderToolsAsync, loadHistory, loadSelection, saveDeploy, saveHeaderTools, saveSelection } from "./persist";
 import { createGithubRelease, generateGithubReleaseNotes, getOriginGithubRepo, listGithubReleases, mergeGithubHistory, syncGithubIntoHistory } from "./github";
 import { polishNotesWithLm } from "./notes";
 import { ensureMtDeploy, loadMtDeploy, toolsFromConfig } from "./mtdeploy";
@@ -31,6 +31,7 @@ type WebviewMessage =
       mergeBranches: string[];
       targetBranches: string[];
       sourceBranch: string;
+      tagBranch: string;
       releaseNotes?: string;
       reuseReleaseBranch: boolean;
       dryRun: boolean;
@@ -200,6 +201,7 @@ export class ReleasePanel {
       const saved = loadSelection(this.context, repoPath);
       const file = loadMtDeploy(repoPath);
       const savedSource = defaultSource(branches, file.sourceBranch);
+      const savedTag = defaultTagBranch(branches, file.tagBranch);
       const fromFile = file.targetBranches?.length ? keepExisting(file.targetBranches, branches) : [];
       const savedTargets = fromFile.length ? fromFile : defaultTargets(branches);
       await this.panel.webview.postMessage({
@@ -207,12 +209,13 @@ export class ReleasePanel {
         branches,
         current,
         source,
-        production,
+        production: savedTag || production,
         dirty,
         currentVersion,
         savedMerge: [],
         savedTargets: savedTargets.length ? savedTargets : defaultTargets(branches),
         savedSource,
+        savedTag,
         savedNotes: saved?.releaseNotes || "",
         mtDeploy: true,
         tools: toolsFromConfig(file),
@@ -233,6 +236,7 @@ export class ReleasePanel {
         mergeBranches: message.mergeBranches,
         targetBranches: message.targetBranches,
         sourceBranch: message.sourceBranch,
+        tagBranch: message.tagBranch,
         reuseReleaseBranch: message.reuseReleaseBranch,
         dryRun: message.dryRun,
         deleteMergedBranches: message.deleteMergedBranches,
@@ -594,9 +598,19 @@ export class ReleasePanel {
             </div>
             <select id="sourceBranch" class="chip-select"></select>
           </section>
-          <section id="step-merge" class="block card">
+          <section id="step-tag-start" class="block card">
             <div class="block-head">
               <span class="step">5</span>
+              <div>
+                <h2 data-i18n="tagStartTitle">Tag start branch</h2>
+                <p data-i18n="tagStartHelp">The tag is created on this branch after merging the release. Main is preselected when present.</p>
+              </div>
+            </div>
+            <select id="tagBranch" class="chip-select"></select>
+          </section>
+          <section id="step-merge" class="block card">
+            <div class="block-head">
+              <span class="step">6</span>
               <div>
                 <h2 data-i18n="mergeTitle">Merge into release</h2>
                 <p data-i18n="mergeHelp">On top of develop, already used as the base.</p>
@@ -616,7 +630,7 @@ export class ReleasePanel {
           </section>
           <section id="step-tag" class="block card">
             <div class="block-head">
-              <span class="step">6</span>
+              <span class="step">7</span>
               <div>
                 <h2 data-i18n="tagTitle">Branches that receive the tag</h2>
                 <p data-i18n="tagHelp">git pull && git merge &lt;tag&gt; --no-ff && git push</p>
@@ -636,7 +650,7 @@ export class ReleasePanel {
           </section>
           <section id="step-notes" class="block card">
             <div class="block-head">
-              <span class="step">7</span>
+              <span class="step">8</span>
               <div>
                 <h2 data-i18n="notesTitle">Release notes</h2>
                 <p data-i18n="notesHelp">This text becomes the GitHub Release body after a successful run.</p>
@@ -647,7 +661,7 @@ export class ReleasePanel {
           </section>
           <section id="step-log" class="block card">
             <div class="block-head">
-              <span class="step">8</span>
+              <span class="step">9</span>
               <div>
                 <h2 data-i18n="log">Log</h2>
                 <p data-i18n="logHelp">Git command output.</p>

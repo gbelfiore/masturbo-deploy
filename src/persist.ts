@@ -40,6 +40,19 @@ export function defaultSource(branches: string[], saved?: string): string {
   return branches[0] || "develop";
 }
 
+export function defaultTagBranch(branches: string[], saved?: string): string {
+  if (saved && branches.includes(saved)) {
+    return saved;
+  }
+  if (branches.includes("main")) {
+    return "main";
+  }
+  if (branches.includes("master")) {
+    return "master";
+  }
+  return branches[0] || "main";
+}
+
 export function loadSelection(context: vscode.ExtensionContext, repoPath: string): RepoSelection | undefined {
   const all = context.globalState.get<Record<string, RepoSelection>>(STORE_KEY, {});
   return all[repoPath];
