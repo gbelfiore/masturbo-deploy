@@ -166,15 +166,55 @@ export class GitRepo {
   }
 
   async merge(ref: string, message?: string): Promise<string> {
-    const args = ["merge", ref, "--no-ff"];
+    const args = ["merge", "--no-ff", "--no-edit", "--", ref];
     if (message) {
-      args.push("-m", message);
+      args.splice(3, 0, "-m", message);
     }
     return this.run(args);
   }
 
+  async mergeKeepHistory(ref: string, message: string): Promise<string> {
+    const head = await this.run(["rev-parse", "HEAD"]);
+    const theirs = await this.run(["rev-parse", ref]);
+    try {
+      await this.run(["merge", "--no-ff", "--no-commit", "--", ref]);
+    } catch (error) {
+      if ((await this.conflictedFiles()).length) {
+        throw error;
+      }
+      const text = `${error instanceof GitError ? error.stderr : ""} ${error instanceof Error ? error.message : ""}`;
+      if (!/already up to date/i.test(text)) {
+        throw error;
+      }
+      return this.recordMergeCommit(head, theirs, message);
+    }
+    if (await this.inMerge()) {
+      return this.commit(message);
+    }
+    return this.recordMergeCommit(head, theirs, message);
+  }
+
+  private async recordMergeCommit(head: string, theirs: string, message: string): Promise<string> {
+    const tree = await this.run(["rev-parse", "HEAD^{tree}"]);
+    const sha = await this.run(["commit-tree", tree, "-p", head, "-p", theirs, "-m", message]);
+    await this.run(["reset", "--hard", sha]);
+    return sha;
+  }
+
   async add(paths: string[]): Promise<string> {
-    return this.run(["add", ...paths]);
+    if (!paths.length) {
+      return "";
+    }
+    return this.run(["add", "--", ...paths]);
+  }
+
+  async isIgnored(filePath: string): Promise<boolean> {
+    try {
+      await this.run(["check-ignore", "-q", "--", filePath]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async commit(message: string): Promise<string> {

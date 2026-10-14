@@ -1,11 +1,10 @@
 import * as vscode from "vscode";
 import { GitRepo } from "./git";
 import { findWorkspaceRepos } from "./repos";
-import { ConflictInfo, runRelease, runResumeTagMerge } from "./release";
+import { ConflictInfo, runCleanup, runRelease, runResumeTagMerge } from "./release";
 import { latestVersion, readPackageVersion } from "./version";
 import { defaultSource, defaultTagBranch, defaultTargets, DeployRecord, HeaderTools, keepExisting, loadHeaderTools, loadHeaderToolsAsync, loadHistory, loadSelection, saveDeploy, saveHeaderTools, saveSelection } from "./persist";
 import { createGithubRelease, generateGithubReleaseNotes, getOriginGithubRepo, listGithubReleases, mergeGithubHistory, syncGithubIntoHistory } from "./github";
-import { polishNotesWithLm } from "./notes";
 import { ensureMtDeploy, loadMtDeploy, toolsFromConfig } from "./mtdeploy";
 import * as path from "path";
 import { LOCALES, Locale, isLocale, loadLocale, MESSAGES, saveLocale, t } from "./i18n";
@@ -44,6 +43,17 @@ type WebviewMessage =
       version: string;
       targetBranches: string[];
       releaseNotes?: string;
+      dryRun: boolean;
+    }
+  | {
+      type: "cleanup";
+      repoPath: string;
+      version: string;
+      mergeBranches: string[];
+      sourceBranch: string;
+      tagBranch: string;
+      deleteMergedBranches: boolean;
+      deleteReleaseBranch: boolean;
       dryRun: boolean;
     };
 
@@ -160,6 +170,10 @@ export class ReleasePanel {
         releaseNotes: message.releaseNotes,
       });
       await this.resumeTag(message);
+      return;
+    }
+    if (message.type === "cleanup") {
+      await this.cleanup(message);
     }
   }
 
@@ -273,7 +287,12 @@ export class ReleasePanel {
       published?.author,
       message.releaseNotes || ""
     );
-    await this.panel.webview.postMessage({ type: "done", ok: result.ok, conflict: Boolean(result.conflict) });
+    await this.panel.webview.postMessage({
+      type: "done",
+      ok: result.ok,
+      conflict: Boolean(result.conflict),
+      dryRun: message.dryRun,
+    });
     const locale = loadLocale(this.context);
     if (result.conflict) {
       await showConflictDialog(locale, result.conflict);
@@ -327,7 +346,12 @@ export class ReleasePanel {
       published?.author,
       message.releaseNotes || ""
     );
-    await this.panel.webview.postMessage({ type: "done", ok: result.ok, conflict: Boolean(result.conflict) });
+    await this.panel.webview.postMessage({
+      type: "done",
+      ok: result.ok,
+      conflict: Boolean(result.conflict),
+      dryRun: message.dryRun,
+    });
     const locale = loadLocale(this.context);
     if (result.conflict) {
       await showConflictDialog(locale, result.conflict);
@@ -337,6 +361,32 @@ export class ReleasePanel {
       void vscode.window.showInformationMessage(t(locale, "resumeMergeDone", { tag: result.tag }));
     } else {
       void vscode.window.showErrorMessage(t(locale, "resumeMergeStopped"));
+    }
+  }
+
+  private async cleanup(message: Extract<WebviewMessage, { type: "cleanup" }>): Promise<void> {
+    const result = await runCleanup(
+      {
+        repoPath: message.repoPath,
+        version: message.version,
+        mergeBranches: message.mergeBranches,
+        sourceBranch: message.sourceBranch,
+        tagBranch: message.tagBranch,
+        deleteMergedBranches: message.deleteMergedBranches,
+        deleteReleaseBranch: message.deleteReleaseBranch,
+        dryRun: message.dryRun,
+        locale: loadLocale(this.context),
+      },
+      (level, text) => {
+        void this.panel.webview.postMessage({ type: "log", level, message: text });
+      }
+    );
+    await this.panel.webview.postMessage({ type: "cleanupDone", ok: result.ok });
+    const locale = loadLocale(this.context);
+    if (result.ok) {
+      void vscode.window.showInformationMessage(t(locale, "cleanupDone"));
+    } else {
+      void vscode.window.showErrorMessage(t(locale, "cleanupStopped"));
     }
   }
 
@@ -421,9 +471,11 @@ export class ReleasePanel {
       const previous = await git.latestTagName();
       const githubRepo = await getOriginGithubRepo(repoPath);
       let draft = "";
+      let fromGithub = false;
       if (githubRepo) {
         try {
           draft = await generateGithubReleaseNotes(githubRepo, version.trim() || "next", previous);
+          fromGithub = Boolean(draft.trim());
         } catch {
           draft = "";
         }
@@ -434,13 +486,11 @@ export class ReleasePanel {
       if (!draft.trim()) {
         throw new Error(t(locale, "notesGenerateEmpty"));
       }
-      const polished = await polishNotesWithLm(draft, locale);
-      const text = polished || draft;
-      await this.panel.webview.postMessage({ type: "notesGenerated", text });
+      await this.panel.webview.postMessage({ type: "notesGenerated", text: draft });
       await this.panel.webview.postMessage({
         type: "log",
         level: "ok",
-        message: polished ? t(locale, "notesGeneratedAi") : t(locale, "notesGeneratedGithub"),
+        message: fromGithub ? t(locale, "notesGeneratedGithub") : t(locale, "notesGeneratedGit"),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -670,6 +720,7 @@ export class ReleasePanel {
             <div id="log" class="log-view"></div>
           </section>
           <div class="form-end">
+            <button id="cleanup" type="button" class="secondary" data-i18n="cleanupBranches" disabled>Delete branches now</button>
             <button id="resumeTag" type="button" class="secondary" data-i18n="resumeMergeTag" disabled>Resume merge tag</button>
             <button id="start" type="button" class="primary" data-i18n="startRelease" disabled>Start release</button>
           </div>

@@ -75,7 +75,7 @@ Non committarla. È memoria locale del clone. Se trovi ancora i vecchi file in r
 
 **Branch che ricevono il tag** — produzione ce l’ha già. Qui scegli gli altri. Per ciascuno: `pull` → `merge <tag> --no-ff` → `push`.
 
-**Release notes** — textarea, oppure **Genera note**: prima GitHub, poi il `git log`, e se Copilot è in casa le riscrive nella lingua del wizard. Dopo una run riuscita diventano il body della GitHub Release (login GitHub di VS Code/Cursor). In dry-run o se origin non è GitHub, non creo niente.
+**Release notes** — textarea, oppure **Genera note**: prima GitHub, se manca il `git log`. Dopo una run riuscita diventano il body della GitHub Release (login GitHub di VS Code/Cursor). In dry-run o se origin non è GitHub, non creo niente.
 
 **Log** — ogni passo, il comando, l’esito. Verde ok, giallo ehm, rosso ci siamo fermati.
 
@@ -189,7 +189,7 @@ Don’t commit it. It’s local memory for this clone. Old root files (`.mtdeplo
 
 **Branches that receive the tag** — production already got it. You pick the others. For each: `pull` → `merge <tag> --no-ff` → `push`.
 
-**Release notes** — textarea, or **Generate notes**: GitHub first, then `git log`, and if Copilot is around I rewrite them in the wizard language. After a successful run they become the GitHub Release body (VS Code/Cursor GitHub login). Dry-run or a non-GitHub origin: I create nothing.
+**Release notes** — textarea, or **Generate notes**: GitHub first, then `git log`. After a successful run they become the GitHub Release body (VS Code/Cursor GitHub login). Dry-run or a non-GitHub origin: I create nothing.
 
 **Log** — every step, the command, the result. Green good, yellow hmm, red we stopped.
 

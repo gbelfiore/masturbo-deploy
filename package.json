@@ -2,7 +2,7 @@
   "name": "masturbodeploy",
   "displayName": "MasTurbo Deploy",
   "description": "Creates the release branch, bumps the version, and handles merge and deploy for workspace repositories",
-  "version": "1.0.9",
+  "version": "1.0.13",
   "publisher": "MasTurboDeploy",
   "author": "Giovanni Belfiore",
   "license": "MIT",
@@ -15,6 +15,17 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "MasTurbo Deploy needs a local git working tree."
+    },
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "MasTurbo Deploy runs git write operations on the workspace."
+    }
+  },
   "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {

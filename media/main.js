@@ -21,6 +21,7 @@ const deleteMerged = document.getElementById("deleteMerged");
 const deleteRelease = document.getElementById("deleteRelease");
 const startBtn = document.getElementById("start");
 const resumeBtn = document.getElementById("resumeTag");
+const cleanupBtn = document.getElementById("cleanup");
 const refreshBtn = document.getElementById("refresh");
 const refreshAllBtn = document.getElementById("refreshAll");
 const logEl = document.getElementById("log");
@@ -47,6 +48,9 @@ let lastHistory = [];
 let lastHistoryError = "";
 let selectedHistoryId = "";
 let generatingNotes = false;
+let cleanupReady = false;
+let cleanupDone = false;
+let lastCleanup = { mergeBranches: [], version: "", sourceBranch: "", tagBranch: "" };
 
 refreshBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh", repoPath: repoSelect.value }));
 refreshAllBtn.addEventListener("click", () => vscode.postMessage({ type: "refresh", repoPath: repoSelect.value }));
@@ -73,8 +77,14 @@ navHistory.addEventListener("click", () => {
   vscode.postMessage({ type: "refreshHistory" });
 });
 [reuse, dryRun, deleteMerged, deleteRelease].forEach((box) => {
-  box.addEventListener("change", persistHeaderTools);
-  box.addEventListener("click", persistHeaderTools);
+  box.addEventListener("change", () => {
+    persistHeaderTools();
+    updateActionButtons();
+  });
+  box.addEventListener("click", () => {
+    persistHeaderTools();
+    updateActionButtons();
+  });
 });
 const rememberedTools = vscode.getState()?.headerTools;
 if (rememberedTools) {
@@ -111,7 +121,33 @@ startBtn.addEventListener("click", () => {
     deleteMergedBranches: deleteMerged.checked,
     deleteReleaseBranch: deleteRelease.checked,
   });
+  lastCleanup = {
+    mergeBranches: checked(mergeBox),
+    version,
+    sourceBranch: sourceSelect.value,
+    tagBranch: tagSelect.value,
+  };
   setRunning(true, "start");
+});
+
+cleanupBtn.addEventListener("click", () => {
+  if (running || loadBusy || !cleanupReady || cleanupDone) return;
+  if (!deleteMerged.checked && !deleteRelease.checked) {
+    appendLog("error", msg("cleanupNothing"));
+    return;
+  }
+  vscode.postMessage({
+    type: "cleanup",
+    repoPath: repoSelect.value,
+    version: lastCleanup.version || versionInput.value.trim(),
+    mergeBranches: lastCleanup.mergeBranches.length ? lastCleanup.mergeBranches : checked(mergeBox),
+    sourceBranch: lastCleanup.sourceBranch || sourceSelect.value,
+    tagBranch: lastCleanup.tagBranch || tagSelect.value,
+    deleteMergedBranches: deleteMerged.checked,
+    deleteReleaseBranch: deleteRelease.checked,
+    dryRun: dryRun.checked,
+  });
+  setRunning(true, "cleanup");
 });
 
 generateNotesBtn.addEventListener("click", () => {
@@ -146,6 +182,12 @@ resumeBtn.addEventListener("click", () => {
     releaseNotes: releaseNotes.value,
     dryRun: dryRun.checked,
   });
+  lastCleanup = {
+    mergeBranches: lastCleanup.mergeBranches.length ? lastCleanup.mergeBranches : checked(mergeBox),
+    version,
+    sourceBranch: lastCleanup.sourceBranch || sourceSelect.value,
+    tagBranch: lastCleanup.tagBranch || tagSelect.value,
+  };
   setRunning(true, "resume");
 });
 
@@ -190,6 +232,8 @@ window.addEventListener("message", (event) => {
     releaseDone = false;
     mergeFailed = false;
     generatingNotes = false;
+    cleanupReady = false;
+    cleanupDone = false;
     updateActionButtons();
     return;
   }
@@ -198,6 +242,8 @@ window.addEventListener("message", (event) => {
     loadBusy = false;
     releaseDone = false;
     mergeFailed = false;
+    cleanupReady = false;
+    cleanupDone = false;
     if (data.error) {
       setPills([data.error], true);
       mergeBox.innerHTML = "";
@@ -257,6 +303,14 @@ window.addEventListener("message", (event) => {
     setRunning(false);
     releaseDone = data.ok === true;
     mergeFailed = data.conflict === true;
+    cleanupReady = data.ok === true && data.dryRun !== true;
+    cleanupDone = false;
+    updateActionButtons();
+    return;
+  }
+  if (data.type === "cleanupDone") {
+    setRunning(false);
+    cleanupDone = data.ok === true;
     updateActionButtons();
   }
 });
@@ -749,10 +803,13 @@ function updateActionButtons() {
   const hasRepo = Boolean(repoSelect.value) && lastRepoState && !lastRepoState.error;
   startBtn.disabled = busy || releaseDone || mergeFailed || !hasRepo;
   resumeBtn.disabled = busy || !mergeFailed || !hasRepo;
+  cleanupBtn.disabled =
+    busy || !cleanupReady || cleanupDone || !hasRepo || (!deleteMerged.checked && !deleteRelease.checked);
   generateNotesBtn.disabled = busy || generatingNotes || !hasRepo;
   generateNotesBtn.textContent = generatingNotes ? msg("generatingNotes") : msg("generateNotes");
   startBtn.textContent = running && runningMode === "start" ? msg("running") : msg("startRelease");
   resumeBtn.textContent = running && runningMode === "resume" ? msg("resumeMergeRunning") : msg("resumeMergeTag");
+  cleanupBtn.textContent = running && runningMode === "cleanup" ? msg("cleanupRunning") : msg("cleanupBranches");
 }
 
 vscode.postMessage({ type: "ready" });

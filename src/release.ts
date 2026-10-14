@@ -32,6 +32,18 @@ export interface ReleaseResult {
   conflict?: ConflictInfo;
 }
 
+export interface CleanupInput {
+  repoPath: string;
+  version: string;
+  mergeBranches: string[];
+  sourceBranch: string;
+  tagBranch: string;
+  deleteMergedBranches: boolean;
+  deleteReleaseBranch: boolean;
+  dryRun: boolean;
+  locale: Locale;
+}
+
 export interface ResumeTagInput {
   repoPath: string;
   version: string;
@@ -134,15 +146,22 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
     }
 
     if (!input.dryRun) {
-      const files = bumpPackageFiles(input.repoPath, version);
-      if (!files.length) {
+      const skipLock = await git.isIgnored("package-lock.json");
+      const files = bumpPackageFiles(input.repoPath, version, { skipLock });
+      const toAdd: string[] = [];
+      for (const file of files) {
+        if (!(await git.isIgnored(file))) {
+          toAdd.push(file);
+        }
+      }
+      if (!toAdd.length) {
         log("info", t(locale, "packageJsonSkipped"));
       } else {
-        log("ok", t(locale, "versionBumped", { version, files: files.join(", ") }));
-        if (!files.includes("package-lock.json")) {
+        log("ok", t(locale, "versionBumped", { version, files: toAdd.join(", ") }));
+        if (!toAdd.includes("package-lock.json")) {
           log("info", t(locale, "noPackageLock"));
         }
-        await git.add(files);
+        await git.add(toAdd);
         if (await git.isDirty()) {
           await git.commit(`chore: bump version to ${version}`);
           log("ok", t(locale, "committedVersion", { version }));
@@ -153,7 +172,8 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
     } else if (!fs.existsSync(path.join(input.repoPath, "package.json"))) {
       log("info", t(locale, "packageJsonSkipped"));
     } else {
-      const lock = fs.existsSync(path.join(input.repoPath, "package-lock.json"));
+      const lock =
+        fs.existsSync(path.join(input.repoPath, "package-lock.json")) && !(await git.isIgnored("package-lock.json"));
       log("info", t(locale, lock ? "dryRunBoth" : "dryRunPkgOnly", { version }));
     }
 
@@ -167,8 +187,8 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
         locale,
         git,
         t(locale, "logMergeBranch", { name: branch }),
-        `git merge ${branch} --no-ff`,
-        () => git.merge(branch, `Merge branch '${branch}' into ${releaseBranch}`),
+        `git merge --no-ff --no-commit ${branch} && git commit -m "Merge branch '${branch}' into ${releaseBranch}"`,
+        () => git.mergeKeepHistory(branch, `Merge branch '${branch}' into ${releaseBranch}`),
         branch
       );
       if (conflict) {
@@ -272,6 +292,58 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
       () => git.checkout(production)
     );
 
+    log("ok", t(locale, "releaseDone", { version }));
+    if (input.deleteMergedBranches || input.deleteReleaseBranch) {
+      const cleanup = await runCleanup(
+        {
+          repoPath: input.repoPath,
+          version,
+          mergeBranches: input.mergeBranches,
+          sourceBranch: source,
+          tagBranch: production,
+          deleteMergedBranches: input.deleteMergedBranches,
+          deleteReleaseBranch: input.deleteReleaseBranch,
+          dryRun: input.dryRun,
+          locale,
+        },
+        onLog
+      );
+      logs.push(...cleanup.logs);
+    } else {
+      log("info", t(locale, "cleanupReady"));
+    }
+    return { ok: true, logs, releaseBranch, tag, productionBranch: production };
+  } catch (error) {
+    const message = formatError(error);
+    log("error", message);
+    const conflict = await detectConflict(git, tag, error);
+    if (conflict) {
+      return stopOnConflict(logs, releaseBranch, tag, "main", conflict, locale, log);
+    }
+    return { ok: false, logs, releaseBranch, tag, productionBranch: "main" };
+  }
+}
+
+export async function runCleanup(input: CleanupInput, onLog?: Logger): Promise<ReleaseResult> {
+  const logs: ReleaseLog[] = [];
+  const log: Logger = (level, message) => {
+    logs.push({ level, message });
+    onLog?.(level, message);
+  };
+  const version = input.version.trim();
+  const releaseBranch = `release/${version}`;
+  const tag = version;
+  const git = new GitRepo(input.repoPath);
+  const locale = input.locale;
+  const source = input.sourceBranch.trim() || (await git.sourceBranch());
+  const production = input.tagBranch.trim() || (await git.productionBranch());
+
+  try {
+    if (!input.deleteMergedBranches && !input.deleteReleaseBranch) {
+      throw new Error(t(locale, "cleanupNothing"));
+    }
+    log("info", input.dryRun ? t(locale, "dryRunMode") : t(locale, "cleanupStart"));
+
     if (input.deleteMergedBranches) {
       const protectedBranches = new Set([
         source,
@@ -336,16 +408,12 @@ export async function runRelease(input: ReleaseInput, onLog?: Logger): Promise<R
       );
     }
 
-    log("ok", t(locale, "releaseDone", { version }));
+    log("ok", t(locale, "cleanupDone"));
     return { ok: true, logs, releaseBranch, tag, productionBranch: production };
   } catch (error) {
     const message = formatError(error);
     log("error", message);
-    const conflict = await detectConflict(git, tag, error);
-    if (conflict) {
-      return stopOnConflict(logs, releaseBranch, tag, "main", conflict, locale, log);
-    }
-    return { ok: false, logs, releaseBranch, tag, productionBranch: "main" };
+    return { ok: false, logs, releaseBranch, tag, productionBranch: production };
   }
 }
 

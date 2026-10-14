@@ -31,7 +31,7 @@ export function latestVersion(...values: Array<string | undefined>): string | un
     .at(-1);
 }
 
-export function bumpPackageFiles(repoRoot: string, version: string): string[] {
+export function bumpPackageFiles(repoRoot: string, version: string, options?: { skipLock?: boolean }): string[] {
   const pkgPath = path.join(repoRoot, "package.json");
   if (!fs.existsSync(pkgPath)) {
     return [];
@@ -43,7 +43,7 @@ export function bumpPackageFiles(repoRoot: string, version: string): string[] {
   const updated = ["package.json"];
 
   const lockPath = path.join(repoRoot, "package-lock.json");
-  if (fs.existsSync(lockPath)) {
+  if (!options?.skipLock && fs.existsSync(lockPath)) {
     const lock = JSON.parse(fs.readFileSync(lockPath, "utf8")) as {
       version?: string;
       packages?: Record<string, { version?: string }>;
